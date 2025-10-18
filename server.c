@@ -504,16 +504,10 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 #ifdef DEBUG
 	LOGD("====== REQ %s ======\n", now_local_iso8601());
 	LOGD("%s %s %s\n", method, url, ver);
-	/* 	if (ci && ci->client_addr)
-		log_client_addr(ci->client_addr);
+	// if (ci && ci->client_addr)
+	// log_client_addr(ci->client_addr);
 
-	LOGD("-- Headers --\n");
-	MHD_get_connection_values(conn, MHD_HEADER_KIND, &log_header_cb, NULL);
-
-	LOGD("-- Cookies --\n");
 	MHD_get_connection_values(conn, MHD_COOKIE_KIND, &log_cookie_cb, NULL);
-
-	LOGD("-- Query Args --\n");
 	MHD_get_connection_values(conn, MHD_GET_ARGUMENT_KIND, &log_query_cb,
 				  NULL);
 
@@ -521,9 +515,10 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 		conn, MHD_HEADER_KIND, MHD_HTTP_HEADER_CONTENT_TYPE);
 	const char *clen = MHD_lookup_connection_value(
 		conn, MHD_HEADER_KIND, MHD_HTTP_HEADER_CONTENT_LENGTH);
-	LOGD("-- Body plan -- Content-Type: %s | Content-Length: %s\n",
-	     ctype ? ctype : "(none)", clen ? clen : "(unknown)") */
-	;
+	if (ctype) {
+		LOGD("-- Body plan -- Content-Type: %s | Content-Length: %s\n",
+		     ctype, clen ? clen : "(unknown)");
+	}
 #endif
 	// First call: allocate per-request ctx
 	struct ReqCtx *ctx = *con_cls;
@@ -567,7 +562,7 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 					     asset->size, asset->content_type,
 					     MHD_RESPMEM_PERSISTENT);
 		} else if (0 == strcmp(url, "/status")) {
-			LOGD("%s requested…", url);
+			LOGD("%s requested…\n", url);
 			// STATUS
 			int used = 0, cap = 0;
 			pthread_mutex_lock(&blob_storage.mutex);
