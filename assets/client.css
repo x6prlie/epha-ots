@@ -35,7 +35,7 @@ html {
 
 body {
     margin: 0;
-    font-family: "Inter", "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     color: var(--text-dark);
     background: linear-gradient(135deg, rgba(14, 165, 233, 0.4), rgba(236, 72, 153, 0.35), rgba(14, 165, 233, 0.55));
     min-height: 100vh;
@@ -287,11 +287,10 @@ main {
     max-width: 700px;
     margin: 1.5rem auto 3rem;
     position: relative;
-    display: grid;
-}
-
-.hero-message-slot > * {
-    grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
 }
 
 .hero-subtitle {
@@ -302,7 +301,7 @@ main {
 }
 
 .hero-subtitle.is-hidden {
-    visibility: hidden;
+    display: none;
 }
 
 .glass-effect {
@@ -540,7 +539,7 @@ select {
 }
 
 .action-buttons .primary-btn {
-    flex: 1 1 220px;
+    flex: 1 1 80px;
     margin-top: 0;
 }
 
@@ -571,8 +570,6 @@ select {
     max-width: none;
     width: 100%;
     display: none;
-    align-self: stretch;
-    justify-self: stretch;
     align-items: stretch;
     justify-content: center;
     z-index: 1;
@@ -617,6 +614,9 @@ select {
     font-size: 0.95rem;
     font-weight: 600;
     color: var(--text-soft);
+    line-height: 1.4;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .status-dismiss {
@@ -697,7 +697,7 @@ select {
 }
 
 .generated-output input {
-    font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size: 0.95rem;
     background: rgba(248, 250, 252, 0.9);
     box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.1);
@@ -893,6 +893,11 @@ select {
     line-height: 1.6;
 }
 
+.version-number {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
 .footer h4 {
     margin: 0 0 1rem;
     font-size: 1rem;
@@ -1003,7 +1008,7 @@ select {
     }
 
     .form-card {
-        padding: 2rem;
+        padding: 1.75rem;
         border-radius: 22px;
     }
 
@@ -1037,6 +1042,25 @@ select {
     .host-card {
         padding: 1.6rem;
     }
+
+    .status-card-body {
+        align-items: flex-start;
+    }
+
+    .status-icon {
+        margin-top: 0.2rem;
+    }
+
+    #statusMessage {
+        width: 100%;
+        margin-top: 0.2rem;
+        text-align: left;
+    }
+
+    .status-dismiss {
+        align-self: flex-start;
+    }
+
 }
 
 @media (max-width: 480px) {
@@ -1049,11 +1073,24 @@ select {
     }
 
     .form-card {
-        padding: 1.75rem;
+        padding: 1rem;
     }
 
     .feature-card {
         padding: 1.5rem;
+    }
+
+    .footer {
+        text-align: center;
+    }
+
+    .footer-grid {
+        justify-content: center;
+        justify-items: center;
+    }
+
+    .footer ul {
+        justify-items: center;
     }
 }
 

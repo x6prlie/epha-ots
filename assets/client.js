@@ -1,3 +1,23 @@
+/*
+ * Copyright (C) 2025 epha-ots authors
+ *
+ * This file is part of epha-ots.
+ *
+ * epha-ots is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * epha-ots is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with epha-ots.  If not, see <https://www.gnu.org/licenses/>.
+ */
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 const $ = (id) => document.getElementById(id);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: false });
@@ -13,8 +33,8 @@ const BLOB_TYPE_TEXT = new Uint8Array([0x13, 0x37]);
 const BLOB_TYPE_PASSWORD = new Uint8Array([0x73, 0x37]);
 const BLOB_TYPE_TEXT_VALUE = 0x1337;
 const BLOB_TYPE_PASSWORD_VALUE = 0x7337;
-const MAX_BLOB_SIZE = 128 * 1024; // 128 KiB
-const PBKDF2_ITERATIONS = 200000;
+const BLOB_SIZE_MAX = 128 * 1024; // 128 KiB
+const PBKDF2_ITERATIONS = 800000;
 const PBKDF2_HASH = 'SHA-256';
 const HKDF_HASH = 'SHA-256';
 
@@ -524,7 +544,7 @@ async function sendSecret(autoCopy = false)
 		blob.set(nonce, 0);
 		blob.set(salt, nonce.length);
 		blob.set(ciphertext, nonce.length + salt.length);
-		if (blob.length > MAX_BLOB_SIZE) {
+		if (blob.length > BLOB_SIZE_MAX) {
 			setStatus('Secret is too large. Maximum size is 1 MiB.',
 				  false);
 			return;
@@ -771,6 +791,7 @@ async function decryptPendingSecretWithPassword()
 		return;
 	}
 	let plaintextBytes = null;
+	let decrypted = false;
 	try {
 		setStatus('Decrypting secret with provided password…');
 		// Construct Pk
@@ -791,13 +812,15 @@ async function decryptPendingSecretWithPassword()
 		passwordField.value = '';
 		setStatus('Secret decrypted with the provided password.', true);
 		setDecryptionCardVisible(false);
+		decrypted = true;
 	} catch (err) {
 		console.error(err);
 		setStatus('Could not decrypt with that password.', false);
 		passwordField.select();
 		passwordField.focus();
 	} finally {
-		clearPendingSecret();
+		if (decrypted)
+			clearPendingSecret();
 		if (plaintextBytes)
 			plaintextBytes.fill(0);
 	}
@@ -883,7 +906,7 @@ document.addEventListener('DOMContentLoaded', function() {
 		const encoder = typeof TextEncoder === 'function' ?
 					new TextEncoder() :
 					null;
-		const maxBytes = MAX_BLOB_SIZE - 100; // TODO: count better
+		const maxBytes = BLOB_SIZE_MAX - 100; // TODO: count better
 		const maxKiBLabel = (maxBytes / 1024).toFixed(2);
 		const toKiB = (bytes) => (bytes / 1024).toFixed(2);
 

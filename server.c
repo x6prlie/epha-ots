@@ -1,66 +1,174 @@
-// epha-ots server
+/*
+ * Copyright (C) 2025 epha-ots authors
+ *
+ * This file is part of epha-ots.
+ *
+ * epha-ots is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * epha-ots is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with epha-ots.  If not, see <https://www.gnu.org/licenses/>.
+ */
 // SPDX-License-Identifier: GPL-3.0-or-later
-//
-// Build: gcc -O2 -Wall -Wextra -pthread server.c -o epha-ots -lmicrohttpd
-// Run:   ./epha-ots --port 8443 --cert cert.pem --key key.pem
-// Dev:   ./epha-ots --http --port 9000
+// epha-ots server
+
 #define _GNU_SOURCE
 #include <microhttpd.h>
 
+#if SIMD_X86
 #include <immintrin.h>
+#endif
+
+#if SIMD_ARM
+#include <arm_neon.h>
+#endif
+
+#include <sys/epoll.h>
+#include <sys/timerfd.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <limits.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "version.h"
 #include "log.h"
 #include "debug_stuff.h"
+#include "balloc.h"
 #include "storage.h"
+#if DEBOUNCER
+#include "debouncer.h"
+#endif
 
-#ifndef MAX
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
 #endif
 
 // ---------------- Config ----------------
-#define DEFAULT_PORT 8443
-#define MAX_BLOB_SIZE (128 * 1024) // 128 KiB per blob
-#define DEFAULT_MAX_BLOBS 10000
-#define DEFAULT_THREAD_POOL_SIZE 4
-#define MIN_BLOB_SIZE (12 + 16 + 2 + 16) // nonce + salt + marker + GCM tag
+#define DEFAULT_PORT (8443)
+#define BLOB_SIZE_MIN (12 + 16 + 2 + 16) // nonce + salt + marker + GCM tag
 
-#define RL_RATE 100.0
-#define RL_BURST 2000.0
-#define RL_BUCKETS 512
+#define REAPER_INTERVAL_S (5)
+#define EPOLL_EVENTS_MAX (2)
+#define REQUESTS_MAX (1024 * 8)
+#if DEBOUNCER
+#define PER_IP_CONN_LIMIT (8)
+#endif
 
-#define REPLACE_SIZE 10
-#define REPLACE_UPTIME "UUUUUUUUUU"
-#define REPLACE_SERVED "SSSSSSSSSS"
+#define STORAGE_BLOBS_MAX (2 * 131072)
+#define ID_LENGTH (32)
+#define BLOB_TTL_S (60 * 60)
+
+// NOTE: be careful
+#define REPLACE_SIZE (16)
+#define REPLACE_UPTIME_CH ('U')
+#define REPLACE_SERVED_CH ('S')
+#define REPLACE_VERSION_CH ('V')
 
 static struct {
 	uint total_served;
-	double start_time;
+	// used to count uptime
+	monotonic_time_t start_time;
+#if STATISTICS
+	uint64_t req_ctx_total_created;
+	uint64_t req_ctx_alive_current;
+	uint64_t req_ctx_alive_max;
+	uint64_t connections_total;
+	uint64_t connections_unknown;
+	uint64_t connections_debounced;
+#endif
 } statistics;
 
-double app_uptime_hours(void)
+float app_uptime_hours()
 {
-	return (now_s() - statistics.start_time) / 60 / 60;
+	return (float)(monotonic_now_s() - statistics.start_time) / 60.f / 60.f;
 }
 
-static volatile sig_atomic_t reaper_stop = 0;
-static pthread_t reaper_tid;
-static bool reaper_started = false;
+#if TAILSCALE
+static bool tailscale_forwarded_addr(struct MHD_Connection *conn,
+				     struct sockaddr_storage *out)
+{
+	const char *xff = MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
+						      "X-Forwarded-For");
+	if (!xff || !*xff)
+		return false;
 
-#define _CONTENT_TYPE_STRING_MAX_SIZE 38
+	char buf[INET6_ADDRSTRLEN];
+	size_t len = strcspn(xff, ",");
+	if (len == 0)
+		return false;
+	if (len >= sizeof(buf))
+		len = sizeof(buf) - 1;
+	memcpy(buf, xff, len);
+	buf[len] = '\0';
+
+	memset(out, 0, sizeof(*out));
+
+	struct sockaddr_in *v4 = (struct sockaddr_in *)out;
+	if (inet_pton(AF_INET, buf, &v4->sin_addr) == 1) {
+		v4->sin_family = AF_INET;
+		return true;
+	}
+
+	struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)out;
+	if (inet_pton(AF_INET6, buf, &v6->sin6_addr) == 1) {
+		v6->sin6_family = AF_INET6;
+		return true;
+	}
+
+	return false;
+}
+#endif
+
+static inline const struct sockaddr *
+connection_peer_addr([[maybe_unused]] struct MHD_Connection *conn,
+		     const union MHD_ConnectionInfo *ci,
+		     [[maybe_unused]] struct sockaddr_storage *storage,
+		     bool *forwarded)
+{
+	if (forwarded)
+		*forwarded = false;
+#if TAILSCALE
+	if (tailscale_forwarded_addr(conn, storage)) {
+		if (forwarded)
+			*forwarded = true;
+		return (const struct sockaddr *)storage;
+	}
+#endif
+	return ci ? ci->client_addr : NULL;
+}
+
+enum HEADER_PROFILE {
+	HP_OTHER,
+	HP_HTML_VIEWER,
+	HP_STATIC_ASSET,
+	HP_API_BLOB,
+	HP_COUNT
+};
+
+#define _CONTENT_TYPE_STRING_MAX_SIZE (38)
 #define _CONTENT_TYPE_HTML "text/html; charset=utf-8"
 #define _CONTENT_TYPE_CSS "text/css; charset=utf-8"
 #define _CONTENT_TYPE_JS "application/javascript; charset=utf-8"
 #define _CONTENT_TYPE_SVG "image/svg+xml"
+
+/*
+ * STATIC ASSETS
+ */
 
 typedef struct {
 	uint8_t *data;
@@ -69,25 +177,35 @@ typedef struct {
 } asset_t;
 
 enum assets_id_t {
+#if ASSEMBLED_HTML
+	ASSET_CLIENT_ASSEMBLED_HTML = 0,
+#else
 	ASSET_CLIENT_HTML = 0,
 	ASSET_CLIENT_CSS,
 	ASSET_CLIENT_JS,
 	ASSET_QRCODE_JS,
+#endif
 	ASSET_FAVICON_SVG,
 	ASSETS_COUNT,
-	KEY_PEM,
-	CERT_PEM
 };
 static uint8_t *assets_memory;
 
 static asset_t assets[ASSETS_COUNT] = {
+#if ASSEMBLED_HTML
+	[ASSET_CLIENT_ASSEMBLED_HTML] = { .content_type = _CONTENT_TYPE_HTML },
+#else
 	[ASSET_CLIENT_HTML] = { .content_type = _CONTENT_TYPE_HTML },
 	[ASSET_CLIENT_CSS] = { .content_type = _CONTENT_TYPE_CSS },
 	[ASSET_CLIENT_JS] = { .content_type = _CONTENT_TYPE_JS },
 	[ASSET_QRCODE_JS] = { .content_type = _CONTENT_TYPE_JS },
+#endif
 	[ASSET_FAVICON_SVG] = { .content_type = _CONTENT_TYPE_SVG }
 };
+
 static const char *asset_file_paths[ASSETS_COUNT] = {
+#if ASSEMBLED_HTML
+	[ASSET_CLIENT_ASSEMBLED_HTML] = "assets/client_assembled.html",
+#else
 	[ASSET_CLIENT_HTML] = "assets/client.html",
 	[ASSET_CLIENT_CSS] = "assets/client.css",
 #if JS_MINIFY
@@ -97,14 +215,20 @@ static const char *asset_file_paths[ASSETS_COUNT] = {
 	[ASSET_CLIENT_JS] = "assets/client.js",
 	[ASSET_QRCODE_JS] = "assets/qrcode.js",
 #endif
+#endif
 	[ASSET_FAVICON_SVG] = "assets/favicon.svg",
 };
+
 #define ASSET_PATH_STRING_MAX_SIZE 15
 static const char asset_paths[ASSETS_COUNT][ASSET_PATH_STRING_MAX_SIZE] = {
+#if ASSEMBLED_HTML
+	[ASSET_CLIENT_ASSEMBLED_HTML] = "/",
+#else
 	[ASSET_CLIENT_HTML] = "/",
 	[ASSET_CLIENT_CSS] = "/client.css",
 	[ASSET_CLIENT_JS] = "/client.js",
 	[ASSET_QRCODE_JS] = "/qrcode.js",
+#endif
 	[ASSET_FAVICON_SVG] = "/favicon.svg",
 };
 
@@ -156,11 +280,11 @@ close_assets_file_descriptors_and_exit_with_error:
 	assets_memory = (uint8_t *)malloc(assets_size_total);
 	if (!assets_memory) {
 		LOGE("Failed to allocate %lu bytes", assets_size_total);
-		for (uint i = 0; ASSETS_COUNT; ++i) {
+		for (uint i = 0; i < ASSETS_COUNT; ++i) {
 			fclose(file_descriptors[i]);
-			assets_free();
-			return false;
 		}
+		assets_free();
+		return false;
 	}
 
 	// read files
@@ -220,6 +344,10 @@ void tls_data_free()
 	tls_key = NULL;
 	tls_cert = NULL;
 }
+
+/*
+ * TLS helpers
+  */
 
 bool tls_data_load(const char *cert_path, const char *key_path)
 {
@@ -296,129 +424,153 @@ cleanup:
 	return success;
 }
 
-// Frees expired blobs until shutdown is requested
-static void *reaper_thread(void *arg)
+static __always_inline bool all16_eq_byte_scalar(const uint8_t *data,
+						 size_t remaining, uint8_t ch)
 {
-	LOGD("%s\n", __FUNCTION__);
-	(void)arg;
-	for (;;) {
-		if (reaper_stop)
-			break;
-		pthread_mutex_lock(&blob_storage.mutex);
-		double t = now_s();
-		for (int i = 0; i < blob_storage.capacity; i++)
-			if (blob_storage.items[i].in_use &&
-			    blob_storage.items[i].expires_at <= t)
-				blob_free_locked(&blob_storage.items[i]);
-		pthread_mutex_unlock(&blob_storage.mutex);
-		if (reaper_stop)
-			break;
-		usleep(250 * 1000); // 250 ms
+	if (remaining < REPLACE_SIZE)
+		return false;
+	for (size_t i = 0; i < REPLACE_SIZE; ++i) {
+		if (data[i] != ch)
+			return false;
+	}
+	return true;
+}
+
+static __always_inline bool all16_eq_byte(const uint8_t *data, size_t remaining,
+					  uint8_t ch)
+{
+	if (remaining < REPLACE_SIZE)
+		return false;
+#if SIMD_X86
+	if (remaining >= 16) {
+		__m128i v = _mm_loadu_si128((const __m128i *)data);
+		__m128i c = _mm_set1_epi8((char)ch);
+		__m128i eq = _mm_cmpeq_epi8(v, c);
+		unsigned int mask = (unsigned int)_mm_movemask_epi8(eq);
+		const unsigned int full = (REPLACE_SIZE == 32) ?
+						  0xFFFFFFFFu :
+						  ((1u << REPLACE_SIZE) - 1u);
+		return (mask & full) == full;
+	}
+#elif SIMD_ARM
+	if (remaining >= 16) {
+		uint8x16_t v = vld1q_u8(data);
+		uint8x16_t c = vdupq_n_u8(ch);
+		uint8x16_t eq = vceqq_u8(v, c);
+		uint8_t mask[16];
+		vst1q_u8(mask, eq);
+		for (size_t i = 0; i < REPLACE_SIZE; ++i) {
+			if (mask[i] != 0xFF)
+				return false;
+		}
+		return true;
+	}
+#endif
+	return all16_eq_byte_scalar(data, remaining, ch);
+}
+
+static char *html_uptime_ptr, *html_served_ptr, *html_version_ptr;
+
+static inline uint8_t *find_16_scalar(const uint8_t *data, size_t size,
+				      uint8_t ch)
+{
+	if (size < REPLACE_SIZE)
+		return NULL;
+	for (size_t i = 0; i <= size - REPLACE_SIZE; ++i) {
+		if (data[i] == ch &&
+		    all16_eq_byte_scalar(data + i, size - i, ch))
+			return (uint8_t *)(data + i);
 	}
 	return NULL;
 }
 
-static uint8_t *html_uptime_ptr, *html_served_ptr;
-static uint8_t *find_10(const uint8_t *data, size_t size, const char ch)
+static uint8_t *find_16(const uint8_t *data, size_t size, const char ch)
 {
-	const uint8_t *end = data + size;
-	__m256i xx = _mm256_set1_epi8(ch);
-	while (end - data >= 32) {
+	// although it is five times faster, we are talking
+	// about few microseconds, twice for the lifetime
+	[[maybe_unused]] const uint8_t *end = data + size;
+#if SIMD_X86 && defined(__AVX2__)
+	__m256i target = _mm256_set1_epi8(ch);
+	while ((size_t)(end - data) >= 32) {
 		__m256i v = _mm256_loadu_si256((const __m256i *)data);
-		__m256i eq = _mm256_cmpeq_epi8(v, xx);
+		__m256i eq = _mm256_cmpeq_epi8(v, target);
 		if (!_mm256_testz_si256(eq, eq)) {
-			uint total = 0;
-			const uint8_t *first = NULL;
-			for (uint i = 0; i < 41 && total < 10; ++i) {
-				if (data[i] == ch) {
-					++total;
-					first = total == 1 ? data + i : first;
-				}
-				// TODO: didn't managed yet
-				// LOGD("%c %u %u\n", data[i], i, total);
-				// LOGD("add %u \t first %p",
-				//      0xFF ^ (data[i] - ch),
-				//      (uint8_t *)((uint64_t)(data + i) *
-				// 		 (total & 1)));
-				// total += 0xFF ^ (data[i] - ch);
-				// first = (uint8_t *)((uint64_t)(data + i) *
-				// 		    (total & 1));
-			}
-			if (total == 10) {
-				return first;
+			uint8_t mask[32];
+			_mm256_storeu_si256((__m256i *)mask, eq);
+			for (size_t i = 0; i < 32; ++i) {
+				size_t remaining = (size_t)(end - (data + i));
+				if (mask[i] == 0xFF &&
+				    all16_eq_byte(data + i, remaining,
+						  (uint8_t)ch))
+					return (uint8_t *)(data + i);
 			}
 		}
 		data += 32;
 	}
-	return NULL;
+	return find_16_scalar(data, (size_t)(end - data), (uint8_t)ch);
+#elif SIMD_ARM
+	uint8x16_t target = vdupq_n_u8((uint8_t)ch);
+	while ((size_t)(end - data) >= 16) {
+		uint8x16_t v = vld1q_u8(data);
+		uint8x16_t eq = vceqq_u8(v, target);
+		uint8_t mask[16];
+		vst1q_u8(mask, eq);
+		for (size_t i = 0; i < 16; ++i) {
+			size_t remaining = (size_t)(end - (data + i));
+			if (mask[i] == 0xFF &&
+			    all16_eq_byte(data + i, remaining, (uint8_t)ch))
+				return (uint8_t *)(data + i);
+		}
+		data += 16;
+	}
+	return find_16_scalar(data, (size_t)(end - data), (uint8_t)ch);
+#else
+	return find_16_scalar(data, size, (uint8_t)ch);
+#endif
 }
 
-// Extract `<id>` out of "/blob/<id>[?query]" style paths.
-static bool parse_blob_id(const char *url, char out_id[MAX_ID_LEN + 1])
-{
-	const char *prefix = "/blob/";
-	size_t prefix_len = strlen(prefix);
-	if (!url || strncmp(url, prefix, prefix_len) != 0)
-		return false;
-	const char *id = url + prefix_len;
-	if (!*id)
-		return false;
-	const char *q = strchr(id, '?');
-	size_t len = q ? (size_t)(q - id) : strlen(id);
-	if (len == 0 || len > MAX_ID_LEN)
-		return false;
-	memcpy(out_id, id, len);
-	out_id[len] = '\0';
-	return id_valid(out_id);
-}
-// ---------------- Rate limiting ----------------
-struct RL {
-	uint32_t ip;
-	double tokens;
-	double last;
-	bool used;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverride-init"
+static const int HEXVAL[256] = {
+	/* default -1 (0xFF) -> we’ll treat high bit as “invalid” */
+	[0 ... 255] = (signed char)0x80,
+	['0'] = 0,
+	['1'] = 1,
+	['2'] = 2,
+	['3'] = 3,
+	['4'] = 4,
+	['5'] = 5,
+	['6'] = 6,
+	['7'] = 7,
+	['8'] = 8,
+	['9'] = 9,
+	['A'] = 10,
+	['B'] = 11,
+	['C'] = 12,
+	['D'] = 13,
+	['E'] = 14,
+	['F'] = 15,
+	['a'] = 10,
+	['b'] = 11,
+	['c'] = 12,
+	['d'] = 13,
+	['e'] = 14,
+	['f'] = 15
 };
-static struct RL g_rl[RL_BUCKETS];
-static pthread_mutex_t g_rl_mu = PTHREAD_MUTEX_INITIALIZER;
+#pragma GCC diagnostic pop
 
-// Collapse sockaddr* into a bucket key; IPv6 (or others) coarsely share a
-// slot.
-static uint32_t ip_to_u32(const struct sockaddr *sa)
+bool id_hex_to_bytes(const char *restrict in, uint8_t *restrict out)
 {
-	if (!sa)
-		return 0;
-	if (sa->sa_family == AF_INET)
-		return ntohl(((const struct sockaddr_in *)sa)->sin_addr.s_addr);
-	return 0; // non-IPv4 share a bucket
-}
-
-// Token-bucket guard: one shared limiter per hashed IP.
-static bool rl_allow(const struct sockaddr *sa)
-{
-	uint32_t ip = ip_to_u32(sa);
-	uint32_t idx = ip % RL_BUCKETS;
-	double t = now_s();
-
-	pthread_mutex_lock(&g_rl_mu);
-	struct RL *e = &g_rl[idx];
-	if (!e->used || e->ip != ip) {
-		e->ip = ip;
-		e->tokens = RL_BURST;
-		e->last = t;
-		e->used = true;
+	const unsigned char *s = (const unsigned char *)in;
+	size_t o = 0;
+	for (size_t i = 0; i < ID_LENGTH; i += 2) {
+		unsigned a = (unsigned)HEXVAL[s[i + 0]];
+		unsigned b = (unsigned)HEXVAL[s[i + 1]];
+		if ((a | b) & 0x80)
+			return false;
+		out[o++] = (unsigned char)((a << 4) | b);
 	}
-	e->tokens += (t - e->last) * RL_RATE;
-	if (e->tokens > RL_BURST)
-		e->tokens = RL_BURST;
-	e->last = t;
-	bool ok = false;
-	if (e->tokens >= 1.0) {
-		e->tokens -= 1.0;
-		ok = true;
-	}
-	pthread_mutex_unlock(&g_rl_mu);
-	LOGD("%s ---> %b\n", __FUNCTION__, ok);
-	return ok;
+	return true;
 }
 
 // ---------------- HTTP helpers ----------------
@@ -426,33 +578,50 @@ static bool rl_allow(const struct sockaddr *sa)
 static enum MHD_Result send_response(struct MHD_Connection *c, unsigned code,
 				     const void *data, size_t len,
 				     const char *content_type,
-				     enum MHD_ResponseMemoryMode mode)
+				     enum MHD_ResponseMemoryMode mode,
+				     enum HEADER_PROFILE header_profile)
 {
-	LOGD("responding %lu bytes of %s\n", len, content_type);
-	struct MHD_Response *r =
+	LOGD("responding %lu bytes of %s\n", len,
+	     content_type ? content_type : "~");
+	struct MHD_Response *resp =
 		MHD_create_response_from_buffer(len, (void *)data, mode);
-	if (!r)
+	if (!resp)
 		return MHD_NO;
+	MHD_add_response_header(resp, "X-Content-Type-Options", "nosniff");
 	if (content_type)
-		MHD_add_response_header(r, "Content-Type", content_type);
-	MHD_add_response_header(r, "Cache-Control", "no-store");
-	enum MHD_Result res = MHD_queue_response(c, code, r);
-	MHD_destroy_response(r);
-	return res;
-}
+		MHD_add_response_header(resp, "Content-Type", content_type);
 
-// Format and emit a small JSON blob
-static enum MHD_Result send_json(struct MHD_Connection *c, unsigned code,
-				 const char *fmt, ...)
-{
-	char buf[512];
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, ap);
-	va_end(ap);
-	return send_response(c, code, buf, strlen(buf),
-			     "application/json; charset=utf-8",
-			     MHD_RESPMEM_MUST_COPY);
+	switch (header_profile) {
+	case HP_HTML_VIEWER:
+		MHD_add_response_header(resp, "Referrer-Policy", "no-referrer");
+		MHD_add_response_header(resp, "X-Frame-Options", "DENY");
+		MHD_add_response_header(resp, "Cross-Origin-Opener-Policy",
+					"same-origin");
+		MHD_add_response_header(resp, "Cross-Origin-Resource-Policy",
+					"same-site");
+
+		break;
+	case HP_STATIC_ASSET:
+		MHD_add_response_header(resp, "Referrer-Policy", "no-referrer");
+		MHD_add_response_header(resp, "X-Frame-Options", "DENY");
+		MHD_add_response_header(resp, "Cross-Origin-Opener-Policy",
+					"same-origin");
+		break;
+	case HP_OTHER:
+	case HP_API_BLOB:
+		MHD_add_response_header(resp, "Cache-Control", "no-store");
+		MHD_add_response_header(resp, "Referrer-Policy", "no-referrer");
+		MHD_add_response_header(resp, "Cross-Origin-Resource-Policy",
+					"same-origin");
+		break;
+	default:
+		unreachable();
+		break;
+	}
+
+	enum MHD_Result res = MHD_queue_response(c, code, resp);
+	MHD_destroy_response(resp);
+	return res;
 }
 
 // Emit plain text; convenience wrapper around send_response.
@@ -460,33 +629,24 @@ static enum MHD_Result send_text(struct MHD_Connection *c, unsigned code,
 				 const char *s)
 {
 	return send_response(c, code, s, strlen(s), "text/plain; charset=utf-8",
-			     MHD_RESPMEM_MUST_COPY);
+			     MHD_RESPMEM_MUST_COPY, HP_OTHER);
 }
-// Request ctx for POST accumulation
-struct ReqCtx {
-	uint8_t *body;
-	size_t len, cap;
-	char id[MAX_ID_LEN + 1];
-	bool have_id;
-	bool rate_checked;
-};
 
-// Dispose buffers accumulated for the active HTTP request.
-static void req_ctx_clear(struct ReqCtx *ctx)
-{
-	if (!ctx)
-		return;
-	// POST bodies are zeroed before release to avoid lingering secrets.
-	if (ctx->body) {
-		secure_zero(ctx->body, ctx->len);
-		free(ctx->body);
-		ctx->body = NULL;
-	}
-	ctx->len = 0;
-	ctx->cap = 0;
-	ctx->have_id = false;
-	secure_zero(ctx->id, sizeof(ctx->id));
-}
+typedef struct req_ctx_t {
+	blk_t *post_body; // allocation that receives an in-flight POST body
+	blk_t *blob_send; // blob fetched for GET replies; freed after send
+	blk_size_t expected; // advertised Content-Length for the current POST
+	blk_size_t read; // bytes already written into post_body->data
+	htable_key_t id; // blob identifier associated with this request
+	bool have_id; // guards against mid-stream ID changes
+#if DEBOUNCER
+	bool rate_checked; // ensures we only rate-limit once per connection
+#endif
+} req_ctx_t;
+
+#include "flalloc.h"
+
+static flalloc_t *req_flalloc;
 
 // Main application handler invoked by libmicrohttpd for each HTTP exchange.
 // Handles rate limiting, static asset serving, blob POST/GET, and health
@@ -498,22 +658,29 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 {
 	(void)cls;
 	(void)ver;
+#ifdef TRACY_ENABLE
+	static _Thread_local bool tracy_named = false;
+	if (!tracy_named) {
+		TracyCSetThreadName("http-handler");
+		tracy_named = true;
+	}
+	TracyCZoneN(ahc_zone, "ahc", 1);
+#define AHC_RETURN(value)                \
+	do {                             \
+		TracyCZoneEnd(ahc_zone); \
+		return (value);          \
+	} while (0)
+#else
+#define AHC_RETURN(value) return (value)
+#endif
 
 	const union MHD_ConnectionInfo *ci = MHD_get_connection_info(
 		conn, MHD_CONNECTION_INFO_CLIENT_ADDRESS);
 #ifdef DEBUG
 	LOGD("====== REQ %s ======\n", now_local_iso8601());
 	LOGD("%s %s %s\n", method, url, ver);
-	/* 	if (ci && ci->client_addr)
-		log_client_addr(ci->client_addr);
 
-	LOGD("-- Headers --\n");
-	MHD_get_connection_values(conn, MHD_HEADER_KIND, &log_header_cb, NULL);
-
-	LOGD("-- Cookies --\n");
 	MHD_get_connection_values(conn, MHD_COOKIE_KIND, &log_cookie_cb, NULL);
-
-	LOGD("-- Query Args --\n");
 	MHD_get_connection_values(conn, MHD_GET_ARGUMENT_KIND, &log_query_cb,
 				  NULL);
 
@@ -521,188 +688,360 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 		conn, MHD_HEADER_KIND, MHD_HTTP_HEADER_CONTENT_TYPE);
 	const char *clen = MHD_lookup_connection_value(
 		conn, MHD_HEADER_KIND, MHD_HTTP_HEADER_CONTENT_LENGTH);
-	LOGD("-- Body plan -- Content-Type: %s | Content-Length: %s\n",
-	     ctype ? ctype : "(none)", clen ? clen : "(unknown)") */
-	;
+	if (ctype) {
+		LOGD("-- Body plan -- Content-Type: %s | Content-Length: %s\n",
+		     ctype, clen ? clen : "(unknown)");
+	}
 #endif
 	// First call: allocate per-request ctx
-	struct ReqCtx *ctx = *con_cls;
+	struct req_ctx_t *ctx = *con_cls;
 	bool new_ctx = false;
 	if (!ctx) {
-		ctx = (struct ReqCtx *)calloc(1, sizeof(*ctx));
+#ifdef TRACY_ENABLE
+		TracyCZoneN(req_ctx_alloc_zone, "req_ctx_alloc", 1);
+#endif
+		ctx = flaalloc(req_flalloc);
+#ifdef TRACY_ENABLE
+		TracyCZoneEnd(req_ctx_alloc_zone);
+#endif
 		if (!ctx)
-			return MHD_NO;
+			AHC_RETURN(MHD_NO);
+#if STATISTICS
+		statistics.req_ctx_total_created += 1;
+		statistics.req_ctx_alive_current += 1;
+		if (statistics.req_ctx_alive_current >
+		    statistics.req_ctx_alive_max) {
+			statistics.req_ctx_alive_max =
+				statistics.req_ctx_alive_current;
+		}
+#endif
 		*con_cls = ctx;
 		new_ctx = true;
 	}
 
-	// Per-IP debounce
-	// TODO fix debounce; Tailscale proxy is local, parse X-Forwarded-For header
-	if (false && !ctx->rate_checked) {
-		LOGD("rate dhecking path\n");
-		bool allowed = true;
-		if (ci && ci->client_addr)
-			allowed = rl_allow(ci->client_addr);
-		ctx->rate_checked = true;
-		if (!allowed)
-			return send_text(conn, MHD_HTTP_TOO_MANY_REQUESTS,
-					 "Too Many Requests");
+	struct sockaddr_storage peer_storage;
+#if STATISTICS
+	bool forwarded = false;
+#endif
+	const struct sockaddr *peer = connection_peer_addr(conn, ci,
+							   &peer_storage,
+#if STATISTICS
+							   &forwarded
+#else
+							   NULL
+#endif
+	);
+
+	bool is_get = (0 == memcmp(method, "GET", 4));
+	asset_t *asset = NULL;
+	bool is_get_path_static = false;
+	bool is_get_path_root = false;
+	if (is_get) {
+		is_get_path_root = 0 == memcmp(url, "/", 2);
+		is_get_path_static = asset_find(url, &asset);
 	}
+
+#if STATISTICS
+	if (new_ctx) {
+		statistics.connections_total += 1;
+		if (!peer)
+			statistics.connections_unknown += 1;
+	}
+#endif
+
+#if DEBOUNCER
+	// Per-IP debounce
+	if (!ctx->rate_checked) {
+		ctx->rate_checked = true;
+		bool should_limit = !is_get_path_static;
+		if (should_limit && !debouncer_allow_addr(peer)) {
+			LOGD("Request debounced (429 Too Many Requests).\n");
+#if STATISTICS
+			statistics.connections_debounced += 1;
+#endif
+			AHC_RETURN(send_text(conn, MHD_HTTP_TOO_MANY_REQUESTS,
+					     "Too Many Requests"));
+		}
+	}
+#endif
 
 	if (new_ctx)
-		return MHD_YES;
+		AHC_RETURN(MHD_YES);
 
-	// GET
-	if (0 == memcmp(method, "GET", 4)) {
-		asset_t *asset = NULL;
-		if (asset_find(url, &asset)) {
-			char str_uptime[10] = { ' ' };
-			char str_served[10] = { ' ' };
-			sprintf(str_uptime, "%.1fH", app_uptime_hours());
-			sprintf(str_served, "%u", statistics.total_served);
-			memcpy(html_uptime_ptr, &str_uptime, 10);
-			memcpy(html_served_ptr, &str_served, 10);
+	bool is_path_blob = 0 == strncmp(url, "/blob/", 6);
 
-			return send_response(conn, MHD_HTTP_OK, asset->data,
-					     asset->size, asset->content_type,
-					     MHD_RESPMEM_PERSISTENT);
-		} else if (0 == strcmp(url, "/status")) {
-			LOGD("%s requested…", url);
-			// STATUS
-			int used = 0, cap = 0;
-			pthread_mutex_lock(&blob_storage.mutex);
-			used = blob_storage.in_use;
-			cap = blob_storage.capacity;
-			pthread_mutex_unlock(&blob_storage.mutex);
-			return send_json(
-				conn, MHD_HTTP_OK,
-				"{\"ok\":true,\"in_use\":%d,\"max\":%d}", used,
-				cap);
-		} else if (0 == strncmp(url, "/blob/", 6)) {
-			LOGD("%s requested…", url);
-			// BLOB
-			char id[MAX_ID_LEN + 1];
-			if (!parse_blob_id(url, id))
-				return send_text(conn, MHD_HTTP_BAD_REQUEST,
-						 "Bad id");
-			uint8_t *blob = NULL;
-			size_t blob_len = 0;
-			if (!blob_take(id, &blob, &blob_len))
-				return send_text(conn, MHD_HTTP_NOT_FOUND,
-						 "Not Found");
-			enum MHD_Result res =
-				send_response(conn, MHD_HTTP_OK, blob, blob_len,
-					      "application/octet-stream",
-					      MHD_RESPMEM_MUST_COPY);
-			secure_zero(blob, blob_len);
-			free(blob);
-			return res;
-
-		} else {
-			LOGE("Client tried to GET %s which is not found", url);
-		}
-	}
-	// POST /blob/<ID>
-	else if (0 == strcmp(method, "POST") &&
-		 0 == strncmp(url, "/blob/", 6)) {
-		char id_buf[MAX_ID_LEN + 1];
-		if (!parse_blob_id(url, id_buf))
-			return send_text(conn, MHD_HTTP_BAD_REQUEST, "Bad id");
-		if (!ctx->have_id) {
-			strncpy(ctx->id, id_buf, sizeof(ctx->id) - 1);
-			ctx->id[sizeof(ctx->id) - 1] = '\0';
-			ctx->have_id = true;
-		} else if (strcmp(ctx->id, id_buf) != 0) {
-			return send_text(conn, MHD_HTTP_BAD_REQUEST, "Bad id");
-		}
-		if (*upload_data_size) {
-			const size_t max_blob = MAX_BLOB_SIZE;
-			size_t incoming = *upload_data_size;
-			if (ctx->len >= max_blob || incoming > max_blob ||
-			    incoming > max_blob - ctx->len) {
-				*upload_data_size = 0;
-				return send_text(conn,
-						 MHD_HTTP_CONTENT_TOO_LARGE,
-						 "Payload Too Large");
+	if (!is_path_blob) {
+		LOGD("%s requested…\n", url);
+		if (is_get_path_static) {
+			if (is_get_path_root) {
+				// NOTE: be careful
+				snprintf(html_uptime_ptr, REPLACE_SIZE,
+					 "%-14.1fH", app_uptime_hours());
+				html_uptime_ptr[REPLACE_SIZE - 1] = ' ';
+				// NOTE: be careful
+				snprintf(html_served_ptr, REPLACE_SIZE, "%-15u",
+					 statistics.total_served);
+				html_served_ptr[REPLACE_SIZE - 1] = ' ';
+				// NOTE: be careful
+				snprintf(html_version_ptr, REPLACE_SIZE,
+					 "%-15.15s", EPHA_VERSION);
+				html_version_ptr[REPLACE_SIZE - 1] = ' ';
 			}
-			size_t need = ctx->len + incoming;
-			if (need > ctx->cap) {
-				size_t ncap = MAX(
-					4096, ctx->cap ? ctx->cap * 2 : 4096);
-				while (ncap < need)
-					ncap *= 2;
-				if (ncap > MAX_BLOB_SIZE)
-					ncap = MAX_BLOB_SIZE;
-				uint8_t *nb =
-					(uint8_t *)realloc(ctx->body, ncap);
-				if (!nb) {
-					*upload_data_size = 0;
-					return send_text(
-						conn,
-						MHD_HTTP_INTERNAL_SERVER_ERROR,
-						"OOM");
+			AHC_RETURN(send_response(
+				conn, MHD_HTTP_OK, asset->data, asset->size,
+				asset->content_type, MHD_RESPMEM_PERSISTENT,
+				is_get_path_root ? HP_HTML_VIEWER :
+						   HP_STATIC_ASSET));
+		} else if (0 == strncmp(url, "/status", 8)) {
+			storage_status_t stats = storage_status();
+			size_t blobs_in_use = 0;
+			for (size_t j = 0;
+			     j < sizeof(stats.in_use) / sizeof(stats.in_use[0]);
+			     ++j) {
+				blobs_in_use += stats.in_use[j];
+			}
+
+			char payload[256];
+#if STATISTICS
+			int written = snprintf(
+				payload, sizeof(payload),
+				"{\"uptime_hours\":%.1f,\"total_served\":%u,"
+				"\"blobs_in_use\":%zu,\"connections\":{"
+				"\"total\":%lu,\"unknown\":%lu,"
+				"\"debounced\":%lu}}",
+				app_uptime_hours(), statistics.total_served,
+				blobs_in_use, statistics.connections_total,
+				statistics.connections_unknown,
+				statistics.connections_debounced);
+#else
+			int written = snprintf(payload, sizeof(payload),
+					       "{\"uptime_hours\":%.1f,"
+					       "\"total_served\":%u,"
+					       "\"blobs_in_use\":%zu}",
+					       app_uptime_hours(),
+					       statistics.total_served,
+					       blobs_in_use);
+#endif
+			if (written < 0 || (size_t)written >= sizeof(payload)) {
+				AHC_RETURN(send_text(
+					conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+					"Status error"));
+			}
+
+			AHC_RETURN(send_response(
+				conn, MHD_HTTP_OK, payload, (size_t)written,
+				"application/json; charset=utf-8",
+				MHD_RESPMEM_MUST_COPY, HP_OTHER));
+		}
+	} else if (ID_LENGTH == strnlen(url + 6, 1 + ID_LENGTH)) {
+		// path is '/blob/*'
+		htable_key_t id;
+		if (!id_hex_to_bytes(url + 6, id.bytes)) {
+			LOGD("%s Bad id!\n", url);
+			AHC_RETURN(send_text(conn, MHD_HTTP_BAD_REQUEST,
+					     "Bad id"));
+		}
+		if (is_get) {
+			// GET /blob/*
+			blk_t *blob = storage_blob_get(id);
+			if (!blob) {
+				LOGD("%s Not found!\n", url);
+				AHC_RETURN(send_text(conn, MHD_HTTP_NOT_FOUND,
+						     "Not Found"));
+			}
+			ctx->blob_send = blob;
+			AHC_RETURN(send_response(
+				conn, MHD_HTTP_OK, blob->data, blob->size,
+				"application/octet-stream",
+				MHD_RESPMEM_PERSISTENT, HP_API_BLOB));
+		} else if (0 == strncmp(method, "POST", 5)) {
+			// POST /blob/*
+			if (!ctx->have_id) {
+				ctx->id.h = id.h;
+				ctx->id.l = id.l;
+				ctx->have_id = true;
+			} else if (ctx->id.h != id.h || ctx->id.l != id.l) {
+				LOGD("%s Bad id (request was initially for another ID)!\n",
+				     url);
+				AHC_RETURN(send_text(conn, MHD_HTTP_BAD_REQUEST,
+						     "Bad id"));
+			}
+
+			// if we have something to read
+			if (*upload_data_size) {
+				// get the blob size via header
+				if (0 == ctx->expected) {
+					const char *content_length_str =
+						MHD_lookup_connection_value(
+							conn, MHD_HEADER_KIND,
+							"Content-Length");
+					if (content_length_str) {
+						unsigned long content_length =
+							strtoul(content_length_str,
+								NULL, 10);
+						// is content length provided?
+						if (!content_length ||
+						    ULONG_MAX ==
+							    content_length) {
+							AHC_RETURN(send_text(
+								conn,
+								MHD_HTTP_BAD_REQUEST,
+								"Bad Content-Length"));
+						}
+						// is size ok?
+						bool is_too_large =
+							content_length >
+							BLOB_SIZE_MAX;
+						bool is_too_small =
+							content_length <
+							BLOB_SIZE_MIN;
+						if (is_too_large ||
+						    is_too_small) {
+							LOGD("%s the blob is too large (%.2f)KiB!\n",
+							     url,
+							     (double)ctx->expected /
+								     1024.0);
+							*upload_data_size = 0;
+							AHC_RETURN(send_text(
+								conn,
+								MHD_HTTP_CONTENT_TOO_LARGE,
+								is_too_large ?
+									"Payload Too Large" :
+									"Payload Too Small"));
+						}
+						ctx->expected = content_length;
+					} else {
+						LOGD("%s no content header!\n",
+						     url);
+						AHC_RETURN(send_text(
+							conn,
+							MHD_HTTP_CONTENT_TOO_LARGE,
+							"Provide Content-Length header."));
+					}
 				}
-				ctx->body = nb;
-				ctx->cap = ncap;
+
+				size_t incoming = *upload_data_size;
+				LOGD("content lenght %u, already read %u"
+				     "\nincoming data: %zu(%.2fKiB)\n",
+				     ctx->expected, ctx->read, incoming,
+				     (double)incoming / 1024.0);
+
+				if (!ctx->post_body) {
+					// storage CREATE
+					if (storage_blob_is_already_taken(
+						    ctx->id)) {
+						LOGD("%s trying to put a duplicate!\n",
+						     url);
+						AHC_RETURN(send_text(
+							conn,
+							MHD_HTTP_BAD_REQUEST,
+							"Duplicate!"));
+					}
+					monotonic_time_t valid_until =
+						monotonic_now_s() + BLOB_TTL_S;
+					ctx->post_body = storage_blob_create(
+						ctx->id, ctx->expected,
+						valid_until);
+					if (!ctx->post_body) {
+						LOGD("%s cannot get the chunk for the blob!\n",
+						     url);
+						AHC_RETURN(send_text(
+							conn,
+							MHD_HTTP_INTERNAL_SERVER_ERROR,
+							"OOM"));
+					}
+				}
+				if (ctx->read + incoming >
+				    ctx->post_body->size) {
+					blk_size_t remaining =
+						ctx->post_body->size -
+						ctx->read;
+					LOGD("%s payload overflow: read=%u incoming=%zu size=%u\n",
+					     url, ctx->read, incoming,
+					     ctx->post_body->size);
+					if (remaining == 0) {
+						*upload_data_size = 0;
+						AHC_RETURN(send_text(
+							conn,
+							MHD_HTTP_BAD_REQUEST,
+							"Body longer than Content-Length"));
+					}
+					incoming = remaining;
+				}
+				memcpy(ctx->post_body->data + ctx->read,
+				       upload_data, incoming);
+				*upload_data_size = 0;
+				ctx->read += incoming;
+				AHC_RETURN(MHD_YES);
 			}
-			memcpy(ctx->body + ctx->len, upload_data,
-			       *upload_data_size);
-			ctx->len += *upload_data_size;
-			*upload_data_size = 0;
-			return MHD_YES;
-		} else {
-			if (!ctx->body || ctx->len < MIN_BLOB_SIZE) {
-				req_ctx_clear(ctx);
-				return send_text(conn, MHD_HTTP_BAD_REQUEST,
-						 "Bad blob");
-			}
-			enum BlobPutStatus st =
-				blob_put(ctx->id, ctx->body, ctx->len);
-			req_ctx_clear(ctx);
-			switch (st) {
-			case BLOB_PUT_OK:
-				++(statistics.total_served);
-				return send_json(conn, MHD_HTTP_OK,
-						 "{\"ok\":true}");
-			case BLOB_PUT_DUP:
-				return send_text(conn, MHD_HTTP_CONFLICT,
-						 "Duplicate id");
-			case BLOB_PUT_FULL:
-				return send_text(conn,
-						 MHD_HTTP_SERVICE_UNAVAILABLE,
-						 "Store Unavailable");
-			default:
-				return send_text(conn,
-						 MHD_HTTP_INTERNAL_SERVER_ERROR,
-						 "Store Failure");
+			// and when it is nothing to read
+			else {
+				if (!ctx->post_body ||
+				    ctx->read != ctx->expected) {
+					LOGD("%s bad blob!\n", url);
+					if (ctx->have_id) {
+						blk_t *bad_blob =
+							storage_blob_get(
+								ctx->id);
+						if (bad_blob) {
+							storage_blob_free(
+								bad_blob);
+							ctx->post_body = NULL;
+						}
+					}
+					AHC_RETURN(send_text(
+						conn, MHD_HTTP_BAD_REQUEST,
+						"Bad blob"));
+				}
+				statistics.total_served += 1;
+				AHC_RETURN(send_response(
+					conn, MHD_HTTP_OK, NULL, 0, NULL,
+					MHD_RESPMEM_PERSISTENT, HP_API_BLOB));
 			}
 		}
 	}
-
-	return send_text(conn, MHD_HTTP_NOT_FOUND, "Not Found");
+	LOGD("path not found %s\n", url);
+	AHC_RETURN(send_text(conn, MHD_HTTP_NOT_FOUND, "Not Found"));
+#undef AHC_RETURN
 }
 
 static void req_done(void *cls, struct MHD_Connection *c, void **con_cls,
 		     enum MHD_RequestTerminationCode toe)
 {
+	LOGD("_______-----------=====---------______\n");
+#ifdef TRACY_ENABLE
+	TracyCZoneN(req_done_zone, "req_done", 1);
+#endif
 	(void)cls;
 	(void)c;
 	(void)toe;
 	if (*con_cls) {
-		struct ReqCtx *ctx = (struct ReqCtx *)(*con_cls);
-		req_ctx_clear(ctx);
-		free(ctx);
+		struct req_ctx_t *ctx = (struct req_ctx_t *)(*con_cls);
+		ctx->post_body = NULL;
+		if (ctx->blob_send) {
+			storage_blob_free(ctx->blob_send);
+			ctx->blob_send = NULL;
+		}
+		secure_zero(ctx->id.bytes, sizeof(ctx->id.bytes));
+#if STATISTICS
+		if (statistics.req_ctx_alive_current > 0) {
+			statistics.req_ctx_alive_current -= 1;
+		}
+#endif
+		flafree(req_flalloc, ctx);
 		*con_cls = NULL;
 	}
+#ifdef TRACY_ENABLE
+	TracyCZoneEnd(req_done_zone);
+#endif
 }
 
-static volatile sig_atomic_t stop_request_loop = 0;
+static volatile sig_atomic_t stop_main_loop = 0;
 // Set by signal handlers to break the request loop.
-static void on_sigint(int s)
+static void on_sigint(int sig)
 {
-	(void)s;
-	stop_request_loop = 1;
-	reaper_stop = 1;
+	LOG("received signal %s", strsignal(sig));
+	stop_main_loop = 1;
 }
 
 int main(int argc, char **argv)
@@ -710,9 +1049,6 @@ int main(int argc, char **argv)
 	const char *cert_path = "cert.pem";
 	const char *key_path = "key.pem";
 	uint port = DEFAULT_PORT;
-	int ttl_sec = DEFAULT_TTL_SEC;
-	int max_blobs = DEFAULT_MAX_BLOBS;
-	uint thread_pool_size = 0;
 	bool use_tls = true;
 
 	for (int i = 1; i < argc; i++) {
@@ -722,155 +1058,233 @@ int main(int argc, char **argv)
 			cert_path = argv[++i];
 		else if (!strcmp(argv[i], "--key") && i + 1 < argc)
 			key_path = argv[++i];
-		else if (!strcmp(argv[i], "--ttl") && i + 1 < argc)
-			ttl_sec = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "--max") && i + 1 < argc)
-			max_blobs = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "--threads") && i + 1 < argc) {
-			long v = strtol(argv[++i], NULL, 10);
-			if (v > 0 && v <= UINT_MAX)
-				thread_pool_size = (unsigned int)v;
-		} else if (!strcmp(argv[i], "--http"))
+		else if (!strcmp(argv[i], "--http")) {
 			use_tls = false;
-		else if (!strcmp(argv[i], "--help")) {
+		} else if (!strcmp(argv[i], "--version")) {
+			printf("epha-ots %s\n", EPHA_VERSION);
+			return EXIT_SUCCESS;
+		} else if (!strcmp(argv[i], "--help")) {
 			fprintf(stderr,
-				"Usage: %s [--port N] [--cert cert.pem] [--key key.pem] [--ttl "
-				"SEC] [--max N] [--threads N] [--http]\n",
+				"Usage: %s [--port N] [--cert cert.pem] [--key key.pem]"
+				" [--http] [--version]\n",
 				argv[0]);
 			return EXIT_SUCCESS;
 		}
 	}
 
 	log_init();
-	LOG("Epha init.");
+	LOG("Epha init. Version %s", EPHA_VERSION);
 
-	if (thread_pool_size == 0) {
-		long cpu = sysconf(_SC_NPROCESSORS_ONLN);
-		if (cpu > 1 && cpu <= (long)UINT_MAX)
-			thread_pool_size = (unsigned int)cpu - 1;
-		else
-			thread_pool_size = DEFAULT_THREAD_POOL_SIZE;
-	}
+	storage_init(STORAGE_BLOBS_MAX);
 
-	// Init store & reaper
-	blob_storage.items =
-		(struct blob_t *)calloc(max_blobs, sizeof(struct blob_t));
-	if (!blob_storage.items) {
-		LOGE("OOM");
-		log_close();
-		return EXIT_FAILURE;
-	}
-	blob_storage.capacity = max_blobs;
-	blob_storage.ttl_seconds = ttl_sec;
-
-	pthread_t tid;
-	if (pthread_create(&tid, NULL, reaper_thread, NULL) != 0) {
-		LOGE("Failed to start reaper");
-		log_close();
-		return EXIT_FAILURE;
-	}
-	reaper_tid = tid;
-	reaper_started = true;
+	struct MHD_Daemon *d = NULL;
+	void *req_ctx_memory = NULL;
+	flalloc_size_t req_ctx_memory_size = 0;
+	int exit_code = EXIT_FAILURE;
+	int efd = -1;
+	int reaper_tfd = -1;
 
 	// TLS
 	if (use_tls) {
 		if (!MHD_is_feature_supported(MHD_FEATURE_TLS)) {
 			LOGE("libmicrohttpd built without TLS; use --http or install "
 			     "TLS-enabled build.");
-			log_close();
-			return EXIT_FAILURE;
+			goto cleanup;
 		}
-		if (tls_data_load(cert_path, key_path)) {
+		if (!tls_data_load(cert_path, key_path)) {
 			LOGE("Failed to read TLS cert/key (cert=%s, key=%s)",
 			     cert_path, key_path);
-			log_close();
-			return EXIT_FAILURE;
+			goto cleanup;
 		}
-	}
-
-	if (!MHD_is_feature_supported(MHD_FEATURE_THREADS)) {
-		LOGE("libmicrohttpd built without thread support; thread pool required.");
-		log_close();
-		return EXIT_FAILURE;
 	}
 
 	if (!assets_load()) {
 		LOGE("Failed to load assets.");
-		log_close();
-		return EXIT_FAILURE;
+		goto cleanup;
 	}
 
-	html_uptime_ptr = find_10(assets[ASSET_CLIENT_HTML].data,
-				  assets[ASSET_CLIENT_HTML].size, 'U');
-	html_served_ptr = find_10(assets[ASSET_CLIENT_HTML].data,
-				  assets[ASSET_CLIENT_HTML].size, 'S');
-	statistics.start_time = now_s();
+	html_uptime_ptr = (char *)find_16(assets[0].data, assets[0].size,
+					  REPLACE_UPTIME_CH);
+	if (!html_uptime_ptr) {
+		LOGE("Cannot find the point of uptime setting in HTML.");
+	}
+	html_served_ptr = (char *)find_16(assets[0].data, assets[0].size,
+					  REPLACE_SERVED_CH);
+	if (!html_served_ptr) {
+		LOGE("Cannot find the point of served setting in HTML.");
+	}
+	html_version_ptr = (char *)find_16(assets[0].data, assets[0].size,
+					   REPLACE_VERSION_CH);
+	if (!html_version_ptr) {
+		LOGE("Cannot find the point of version setting in HTML.");
+	}
 
-	unsigned int daemon_flags = MHD_USE_INTERNAL_POLLING_THREAD |
+	req_ctx_memory_size = flafootprint(REQUESTS_MAX);
+	req_ctx_memory = malloc(req_ctx_memory_size);
+	if (!req_ctx_memory) {
+		LOGE("Failed to allocate %.2f KiB of memory for requests.",
+		     (float)req_ctx_memory_size / 1024.f);
+		goto cleanup;
+	}
+	req_flalloc = flainit(req_ctx_memory, REQUESTS_MAX);
+
+	statistics.start_time = monotonic_now_s();
+
+	unsigned int daemon_flags = MHD_USE_EPOLL_LINUX_ONLY |
 				    (use_tls ? MHD_USE_TLS : 0);
-	struct MHD_Daemon *d =
-		use_tls ?
-			MHD_start_daemon(
-				daemon_flags, port, NULL, NULL, &ahc, NULL,
-				MHD_OPTION_HTTPS_MEM_KEY, tls_key,
-				MHD_OPTION_HTTPS_MEM_CERT, tls_cert,
-				MHD_OPTION_THREAD_POOL_SIZE, thread_pool_size,
-				MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)10,
-				MHD_OPTION_NOTIFY_COMPLETED, req_done, NULL,
-				MHD_OPTION_LISTENING_ADDRESS_REUSE, 1,
-				MHD_OPTION_END) :
-			MHD_start_daemon(
-				daemon_flags, port, NULL, NULL, &ahc, NULL,
-				MHD_OPTION_THREAD_POOL_SIZE, thread_pool_size,
-				MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)10,
-				MHD_OPTION_NOTIFY_COMPLETED, req_done, NULL,
-				MHD_OPTION_LISTENING_ADDRESS_REUSE, 1,
-				MHD_OPTION_END);
+
+	d = use_tls ?
+		    MHD_start_daemon(daemon_flags, port, NULL, NULL, &ahc, NULL,
+				     MHD_OPTION_HTTPS_MEM_KEY, tls_key,
+				     MHD_OPTION_HTTPS_MEM_CERT, tls_cert,
+#if !TAILSCALE
+				     MHD_OPTION_CONNECTION_TIMEOUT,
+				     (unsigned int)10,
+#endif
+				     MHD_OPTION_NOTIFY_COMPLETED, req_done,
+				     NULL, MHD_OPTION_LISTENING_ADDRESS_REUSE,
+				     1, MHD_OPTION_CONNECTION_LIMIT,
+				     (unsigned int)REQUESTS_MAX,
+#if DEBOUNCER
+				     MHD_OPTION_PER_IP_CONNECTION_LIMIT,
+				     (unsigned int)PER_IP_CONN_LIMIT,
+#endif
+				     MHD_OPTION_END) :
+		    MHD_start_daemon(daemon_flags, port, NULL, NULL, &ahc, NULL,
+#if !TAILSCALE
+				     MHD_OPTION_CONNECTION_TIMEOUT,
+				     (unsigned int)10,
+#endif
+				     MHD_OPTION_NOTIFY_COMPLETED, req_done,
+				     NULL, MHD_OPTION_LISTENING_ADDRESS_REUSE,
+				     1, MHD_OPTION_CONNECTION_LIMIT,
+				     (unsigned int)REQUESTS_MAX,
+#if DEBOUNCER
+				     MHD_OPTION_PER_IP_CONNECTION_LIMIT,
+				     (unsigned int)PER_IP_CONN_LIMIT,
+#endif
+				     MHD_OPTION_END);
 
 	if (!d) {
-		perror("MHD_start_daemon");
+		LOGE("MHD_start_daemon");
 		LOGE("Failed to start daemon on port %u. Hints:\n"
 		     "  - Port busy? try --port 9000\n"
 		     "  - TLS disabled in libmicrohttpd? use --http\n"
 		     "  - Invalid cert/key? regenerate dev certs",
 		     port);
-		tls_data_free();
-		log_close();
-		return EXIT_FAILURE;
+		goto cleanup;
 	}
 
-	LOG("%s epha-ots server on :%u (TTL=%ds, max=%d, %.1fKiB/blob, pool=%u threads)",
-	    use_tls ? "HTTPS" : "HTTP", port, ttl_sec, max_blobs,
-	    ((float)MAX_BLOB_SIZE / 1024.0f), thread_pool_size);
+	LOG("%s epha-ots server on :%u (max=%d, %.1f KiB/blob)",
+	    use_tls ? "HTTPS" : "HTTP", port, STORAGE_BLOBS_MAX,
+	    ((float)BLOB_SIZE_MAX / 1024.0f));
 	LOG("Endpoints: POST /blob/<id>, GET /blob/<id>, GET /status");
 
 	signal(SIGINT, on_sigint);
 	signal(SIGTERM, on_sigint);
 
-	while (!stop_request_loop)
-		pause();
-
-	reaper_stop = 1;
-	if (reaper_started) {
-		// Wait for the janitor thread so it cannot touch freed slots
-		pthread_join(reaper_tid, NULL);
-		reaper_started = false;
+	const union MHD_DaemonInfo *di =
+		MHD_get_daemon_info(d, MHD_DAEMON_INFO_EPOLL_FD);
+	if (!di) {
+		LOGE("MHD_get_daemon_info");
+		goto cleanup;
+	}
+	int mhd_epfd = di->epoll_fd;
+	if (mhd_epfd < 0) {
+		LOGE("Invalid epoll fd from MHD daemon");
+		goto cleanup;
 	}
 
-	MHD_stop_daemon(d);
+	efd = epoll_create1(EPOLL_CLOEXEC);
+	reaper_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+	if (efd < 0 || reaper_tfd < 0) {
+		LOGE("epoll_create1: %s, %i %i", strerror(errno), efd,
+		     reaper_tfd);
+		goto cleanup;
+	}
+	struct itimerspec reaper_timer_spec = {
+		.it_interval = { .tv_sec = REAPER_INTERVAL_S, .tv_nsec = 0 }
+	};
+	reaper_timer_spec.it_value = reaper_timer_spec.it_interval;
+	if (timerfd_settime(reaper_tfd, 0, &reaper_timer_spec, NULL) < 0) {
+		LOGE("timerfd_settime: %s", strerror(errno));
+		goto cleanup;
+	}
+
+	struct epoll_event mhd_ev = {
+		.events = EPOLLIN,
+		.data.fd = mhd_epfd,
+	};
+	struct epoll_event reaper_ev = { .events = EPOLLIN,
+					 .data.fd = reaper_tfd };
+	if (epoll_ctl(efd, EPOLL_CTL_ADD, mhd_epfd, &mhd_ev) < 0 ||
+	    epoll_ctl(efd, EPOLL_CTL_ADD, reaper_tfd, &reaper_ev) < 0) {
+		LOGE("epoll_ctl: %s", strerror(errno));
+		goto cleanup;
+	}
+
+	struct epoll_event events[EPOLL_EVENTS_MAX];
+	uint64_t epoll_timeout = REAPER_INTERVAL_S * 1000;
+	while (!stop_main_loop) {
+		int events_num = epoll_wait(efd, events, EPOLL_EVENTS_MAX,
+					    epoll_timeout);
+		for (int i = 0; i < events_num; ++i) {
+			if (events[i].data.fd == mhd_epfd) {
+				if (MHD_run(d) == MHD_NO) {
+					LOGE("MHD_run failed");
+					goto cleanup;
+				}
+				MHD_get_timeout64(d, &epoll_timeout);
+			} else {
+				LOGD("reaper\n");
+				uint64_t dummy;
+				(void)!read(events[i].data.fd, &dummy,
+					    sizeof(dummy));
+				storage_reaper();
+			}
+		}
+		if (events_num == 0) {
+			if (MHD_run(d) == MHD_NO) {
+				LOGE("MHD_run failed");
+				goto cleanup;
+			}
+			MHD_get_timeout64(d, &epoll_timeout);
+		}
+	}
+
+	exit_code = EXIT_SUCCESS;
+
+cleanup:
+	if (efd >= 0) {
+		close(efd);
+	}
+	if (reaper_tfd >= 0) {
+		close(reaper_tfd);
+	}
+	if (d) {
+		MHD_stop_daemon(d);
+	}
 	tls_data_free();
 	assets_free();
 
-	pthread_mutex_lock(&blob_storage.mutex);
-	for (int i = 0; i < blob_storage.capacity; i++)
-		if (blob_storage.items[i].in_use)
-			blob_free_locked(&blob_storage.items[i]);
-	secure_zero(blob_storage.items,
-		    (size_t)blob_storage.capacity * sizeof(struct blob_t));
-	free(blob_storage.items);
-	pthread_mutex_unlock(&blob_storage.mutex);
+	storage_free();
+	if (req_ctx_memory) {
+		secure_zero(req_ctx_memory, req_ctx_memory_size);
+	}
+#if STATISTICS
+	LOG("req_ctx_t statistics: total created=%lu, peak alive=%lu, alive now=%lu",
+	    statistics.req_ctx_total_created, statistics.req_ctx_alive_max,
+	    statistics.req_ctx_alive_current);
+	LOG("connection statistics: total=%lu, unknown=%lu",
+	    statistics.connections_total, statistics.connections_unknown);
+#if DEBOUNCER
+	LOG("debouncer statistics: total debounced=%lu, capacity=%u, window_ms=%u",
+	    statistics.connections_debounced, DEB_CAP, DEB_WINDOW_MS);
+#endif
+#endif
 
-	LOG("Epha exit normal.");
+	if (exit_code == EXIT_SUCCESS)
+		LOG("Epha exit normal.");
 	log_close();
-	return EXIT_SUCCESS;
+	return exit_code;
 }

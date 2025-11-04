@@ -738,7 +738,7 @@ function QRRSBlock(totalCount, dataCount)
 	this.totalCount = totalCount;
 	this.dataCount = dataCount;
 }
-QRRSBlock.RS_BLOCK_TABLE = [
+QRRSBlock.RS_blk_tABLE = [
 	[1, 26, 19],
 	[1, 26, 16],
 	[1, 26, 13],
@@ -921,13 +921,13 @@ QRRSBlock.getRSBlocks = function(typeNumber, errorCorrectLevel) {
 QRRSBlock.getRsBlockTable = function(typeNumber, errorCorrectLevel) {
 	switch (errorCorrectLevel) {
 	case QRErrorCorrectLevel.L:
-		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 0];
+		return QRRSBlock.RS_blk_tABLE[(typeNumber - 1) * 4 + 0];
 	case QRErrorCorrectLevel.M:
-		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 1];
+		return QRRSBlock.RS_blk_tABLE[(typeNumber - 1) * 4 + 1];
 	case QRErrorCorrectLevel.Q:
-		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 2];
+		return QRRSBlock.RS_blk_tABLE[(typeNumber - 1) * 4 + 2];
 	case QRErrorCorrectLevel.H:
-		return QRRSBlock.RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 3];
+		return QRRSBlock.RS_blk_tABLE[(typeNumber - 1) * 4 + 3];
 	default:
 		return undefined;
 	}

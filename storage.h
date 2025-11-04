@@ -1,171 +1,77 @@
+/*
+ * Copyright (C) 2025 epha-ots authors
+ *
+ * This file is part of epha-ots.
+ *
+ * epha-ots is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * epha-ots is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with epha-ots.  If not, see <https://www.gnu.org/licenses/>.
+ */
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 
-#include <pthread.h>
+#include "log.h"
+#include "types.h"
 
-#define MAX_ID_LEN 32
-#define DEFAULT_TTL_SEC 3600
-#define BLOB_ID_HEX_LEN 32
+/*
+ * ====================================================================== 
+ */
 
-static inline double now_s(void)
+// helpers
+typedef uint32_t monotonic_time_t;
+static inline monotonic_time_t monotonic_now_s();
+void secure_zero(void *p, size_t n);
+
+void storage_init(htable_index_t htable_size);
+void storage_free();
+blk_t *storage_blob_create(htable_key_t id, blk_size_t size,
+			   monotonic_time_t valid_until);
+bool storage_blob_is_already_taken(htable_key_t id);
+// the caller becomes the owner
+// and must call storage_blob_free after reading
+blk_t *storage_blob_get(htable_key_t id);
+void storage_blob_free(blk_t *blob);
+
+typedef struct storage_status_t storage_status_t;
+storage_status_t storage_status();
+
+void storage_reaper();
+
+/*
+ * ====================================================================== 
+ */
+
+static inline monotonic_time_t monotonic_now_s()
 {
 	struct timespec ts;
+	// man clock_gettime: This clock does not count time that the system is suspended.
+	// On Linux, that point corresponds to the number of seconds
+	// that the system has been running since it was booted.
+	// therefore we can chop it to u32
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+	return (monotonic_time_t)ts.tv_sec;
 }
 
-static void secure_zero(void *p, size_t n)
-{
-	explicit_bzero(p, n);
-}
-
-struct blob_t {
-	char id[MAX_ID_LEN + 1];
-	uint8_t *data;
-	size_t length;
-	double expires_at;
-	bool in_use;
-};
-
-enum BlobPutStatus {
-	BLOB_PUT_OK = 0,
-	BLOB_PUT_DUP,
-	BLOB_PUT_FULL,
-	BLOB_PUT_OOM
-};
-
-// Reserve space and copy payload into the in-memory blob store.
-static enum BlobPutStatus blob_put(const char *id, const uint8_t *buf,
-				   size_t len);
-
-// Remove-and-return a blob by id; ownership transfers to caller.
-static bool blob_take(const char *id, uint8_t **out_buf, size_t *out_len);
-
-static struct {
-	struct blob_t *items;
-	int capacity;
-	int in_use;
-	int ttl_seconds;
-	pthread_mutex_t mutex;
-} blob_storage = { .items = NULL,
-		   .capacity = 0,
-		   .in_use = 0,
-		   .ttl_seconds = DEFAULT_TTL_SEC,
-		   .mutex = PTHREAD_MUTEX_INITIALIZER };
-
-// Securely discard an entry; caller must hold blob_storage.mutex.
-static void blob_free_locked(struct blob_t *b)
-{
-	if (!b || !b->in_use)
-		return;
-	if (b->data) {
-		secure_zero(b->data, b->length);
-		free(b->data);
-	}
-	secure_zero(b->id, sizeof(b->id));
-	b->data = NULL;
-	b->length = 0;
-	b->expires_at = 0;
-	b->in_use = false;
-	if (blob_storage.in_use > 0)
-		blob_storage.in_use--;
-}
-
-// Ensure blob id is canonical lowercase hex.
-static bool id_valid(char *id)
-{
-	if (!id)
-		return false;
-	size_t len = strlen(id);
-	if (len != BLOB_ID_HEX_LEN || len > MAX_ID_LEN)
-		return false;
-	for (size_t i = 0; i < len; i++) {
-		unsigned char c = (unsigned char)id[i];
-		if (!isxdigit(c))
-			return false;
-		id[i] = (char)tolower(c);
-	}
-	return true;
-}
-static enum BlobPutStatus blob_put(const char *id, const uint8_t *buf,
-				   size_t len)
-{
-	if (!id || !buf)
-		return BLOB_PUT_OOM;
-
-	pthread_mutex_lock(&blob_storage.mutex);
-	struct blob_t *slot = NULL;
-	for (int i = 0; i < blob_storage.capacity; i++) {
-		struct blob_t *b = &blob_storage.items[i];
-		if (!b->in_use) {
-			if (!slot)
-				slot = b;
-			continue;
-		}
-		if (strcmp(b->id, id) == 0) {
-			pthread_mutex_unlock(&blob_storage.mutex);
-			return BLOB_PUT_DUP;
-		}
-	}
-	if (!slot) {
-		pthread_mutex_unlock(&blob_storage.mutex);
-		return BLOB_PUT_FULL;
-	}
-
-	// Copy payload into a new buffer owned by the store until retrieved.
-	uint8_t *data = (uint8_t *)malloc(len);
-	if (!data) {
-		pthread_mutex_unlock(&blob_storage.mutex);
-		return BLOB_PUT_OOM;
-	}
-	memcpy(data, buf, len);
-
-	struct blob_t *b = slot;
-	strncpy(b->id, id, sizeof(b->id) - 1);
-	b->id[sizeof(b->id) - 1] = '\0';
-	b->data = data;
-	b->length = len;
-	b->expires_at = now_s() + (blob_storage.ttl_seconds > 0 ?
-					   blob_storage.ttl_seconds :
-					   DEFAULT_TTL_SEC);
-	b->in_use = true;
-	blob_storage.in_use++;
-	pthread_mutex_unlock(&blob_storage.mutex);
-
-	return BLOB_PUT_OK;
-}
-
-static bool blob_take(const char *id, uint8_t **out_buf, size_t *out_len)
-{
-	if (!id || !out_buf)
-		return false;
-	bool ok = false;
-	pthread_mutex_lock(&blob_storage.mutex);
-	for (int i = 0; i < blob_storage.capacity; i++) {
-		struct blob_t *b = &blob_storage.items[i];
-		if (!b->in_use)
-			continue;
-		if (strcmp(b->id, id) != 0)
-			continue;
-		// Transfer ownership of the payload buffer to the caller.
-		*out_buf = b->data;
-		if (out_len)
-			*out_len = b->length;
-		b->data = NULL;
-		b->length = 0;
-		b->expires_at = 0;
-		b->in_use = false;
-		secure_zero(b->id, sizeof(b->id));
-		if (blob_storage.in_use > 0)
-			blob_storage.in_use--;
-		ok = true;
-		break;
-	}
-	pthread_mutex_unlock(&blob_storage.mutex);
-	return ok;
-}
+typedef struct storage_status_t {
+	// must be carefull
+	size_t in_use[11];
+	size_t max[11];
+} storage_status_t;

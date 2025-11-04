@@ -1,6 +1,9 @@
-build
-powturbo
+build*
 *.pem
 .vscode
 assets/sodium.js
+assets/*.min.js
 epha.log
+perf.data
+perf.data.old
+gmon.out

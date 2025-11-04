@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <title>Epha-ots — Secure Secret Sharing</title>
+    <link rel="icon" type="image/svg" href="favicon.svg">
+    <style>
+:root {
+    --primary-50: #f0f9ff;
+    --primary-100: #e0f2fe;
+    --primary-200: #bae6fd;
+    --primary-300: #7dd3fc;
+    --primary-400: #38bdf8;
+    --primary-500: #0ea5e9;
+    --primary-600: #0284c7;
+    --primary-700: #0369a1;
+    --primary-800: #075985;
+    --primary-900: #0c4a6e;
+    --secondary-50: #fdf4ff;
+    --secondary-100: #fae8ff;
+    --secondary-200: #f5d0fe;
+    --secondary-300: #f0abfc;
+    --secondary-400: #e879f9;
+    --secondary-500: #d946ef;
+    --secondary-600: #c026d3;
+    --secondary-700: #a21caf;
+    --secondary-800: #86198f;
+    --secondary-900: #701a75;
+    --text-dark: #0f172a;
+    --text-muted: #475569;
+    --text-soft: #64748b;
+    --border-soft: rgba(226, 232, 240, 0.85);
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 16px;
+}
+
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    color: var(--text-dark);
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.4), rgba(236, 72, 153, 0.35), rgba(14, 165, 233, 0.55));
+    min-height: 100vh;
+    position: relative;
+    overflow-x: hidden;
+}
+
+body::before,
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+}
+
+body::before {
+    background: radial-gradient(circle at 20% 20%, rgba(59, 130, 246, 0.35), transparent 55%),
+                radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.35), transparent 60%),
+                radial-gradient(circle at 50% 75%, rgba(14, 165, 233, 0.35), transparent 65%);
+    filter: blur(6px);
+}
+
+body::after {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0));
+    opacity: 0.7;
+}
+
+.ambient-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+}
+
+.ambient-bg::before,
+.ambient-bg::after {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(150px);
+    opacity: 0.65;
+}
+
+.ambient-bg::before {
+    width: 520px;
+    height: 520px;
+    top: -120px;
+    right: -120px;
+    background: radial-gradient(circle, rgba(79, 70, 229, 0.75), transparent 60%);
+}
+
+.ambient-bg::after {
+    width: 480px;
+    height: 480px;
+    bottom: -160px;
+    left: -120px;
+    background: radial-gradient(circle, rgba(14, 165, 233, 0.75), transparent 60%);
+}
+
+.container {
+    width: min(90%, 1120px);
+    margin: 0 auto;
+}
+
+.navbar {
+    margin: 0.75rem auto 0;
+    width: min(94%, 1080px);
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 24px;
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+    position: relative;
+    z-index: 2;
+}
+
+.navbar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.75rem;
+    position: relative;
+}
+
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.icon-circle {
+    width: 44px;
+    height: 44px;
+    border-radius: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(14, 165, 233, 0.12);
+    color: var(--primary-600);
+    box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.15);
+}
+
+.icon-circle.secondary {
+    background: rgba(217, 70, 239, 0.14);
+    color: var(--secondary-600);
+    box-shadow: inset 0 0 0 1px rgba(217, 70, 239, 0.15);
+}
+
+.brand-name {
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.icon {
+    width: 24px;
+    height: 24px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.nav-links {
+    display: flex;
+    align-items: center;
+    gap: 1.35rem;
+}
+
+.nav-link {
+    color: #334155;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.95rem;
+    padding: 0.35rem 0.25rem;
+    transition: color 0.25s ease, transform 0.25s ease;
+}
+
+.nav-link:hover {
+    color: var(--primary-600);
+    transform: translateY(-2px);
+}
+
+.nav-cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.65rem 1.4rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #ffffff;
+    background: linear-gradient(135deg, var(--primary-500), var(--secondary-500));
+    box-shadow: 0 16px 35px rgba(14, 165, 233, 0.28);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.nav-cta:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 24px 45px rgba(14, 165, 233, 0.35);
+}
+
+.nav-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 16px;
+    border: none;
+    background: rgba(255, 255, 255, 0.85);
+    box-shadow: 0 16px 35px rgba(15, 23, 42, 0.12);
+    cursor: pointer;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.nav-toggle:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 22px 40px rgba(15, 23, 42, 0.18);
+}
+
+.nav-toggle-bar {
+    position: relative;
+    width: 22px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--text-dark);
+    transition: background 0.3s ease;
+}
+
+.nav-toggle-bar::before,
+.nav-toggle-bar::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    width: 22px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--text-dark);
+    transition: transform 0.35s ease, opacity 0.3s ease;
+}
+
+.nav-toggle-bar::before {
+    transform: translateY(-6px);
+}
+
+.nav-toggle-bar::after {
+    transform: translateY(6px);
+}
+
+.nav-toggle.is-active .nav-toggle-bar {
+    background: transparent;
+}
+
+.nav-toggle.is-active .nav-toggle-bar::before {
+    transform: rotate(45deg);
+}
+
+.nav-toggle.is-active .nav-toggle-bar::after {
+    transform: rotate(-45deg);
+}
+
+main {
+    position: relative;
+    z-index: 1;
+}
+
+.hero {
+    padding: 2.5rem 0 4.5rem;
+    text-align: center;
+}
+
+.hero-title {
+    font-size: clamp(2.7rem, 4vw + 1.8rem, 4.2rem);
+    line-height: 1.08;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0;
+}
+
+.hero-title span {
+    background: linear-gradient(120deg, var(--primary-600), var(--secondary-500));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.hero-message-slot {
+    max-width: 700px;
+    margin: 1.5rem auto 3rem;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+}
+
+.hero-subtitle {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 1.4rem;
+    line-height: 1.7;
+}
+
+.hero-subtitle.is-hidden {
+    display: none;
+}
+
+.glass-effect {
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.form-card {
+    max-width: 680px;
+    margin: 0 auto 3.75rem;
+    border-radius: 26px;
+    padding: 2.75rem;
+    box-shadow: 0 30px 80px rgba(15, 23, 42, 0.16);
+    position: relative;
+    overflow: hidden;
+}
+
+.form-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(135deg, rgba(56, 189, 248, 0.25), rgba(217, 70, 239, 0.18));
+    opacity: 0;
+    transition: opacity 0.35s ease;
+}
+
+.form-card:hover::before {
+    opacity: 1;
+}
+
+.decryption-card {
+    margin: 0rem auto 3rem;
+}
+
+.decryption-card-header {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    margin-bottom: 1.75rem;
+}
+
+.decryption-card-header h2 {
+    margin: 0 0 0.35rem;
+    font-size: 1.45rem;
+    letter-spacing: -0.01em;
+}
+
+.decryption-card-header p {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--text-soft);
+}
+
+.decryption-actions {
+    margin-top: 1.5rem;
+}
+
+.decryption-actions .primary-btn {
+    margin-top: 0;
+}
+
+#encryptionCard,
+#decryptionCard {
+    display: none;
+}
+
+#encryptionCard.is-visible,
+#decryptionCard.is-visible {
+    display: block;
+}
+
+.decryption-note {
+    margin-top: 1.5rem;
+}
+
+.form-field {
+    text-align: left;
+}
+
+label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #1e293b;
+    margin-bottom: 0.55rem;
+}
+
+textarea,
+select,
+input[type="password"],
+input[type="text"],
+input[type="url"] {
+    width: 100%;
+    border: 1px solid rgba(148, 163, 184, 0.38);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.9);
+    color: var(--text-dark);
+    font-size: 1rem;
+    line-height: 1.55;
+    padding: 1.1rem 1.2rem;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+}
+
+textarea {
+    resize: vertical;
+    min-height: 170px;
+    max-height: 420px;
+}
+
+textarea.textarea-locked {
+    background: rgba(255, 255, 255, 0.7);
+    border-style: dashed;
+    cursor: not-allowed;
+}
+
+textarea:focus,
+select:focus,
+input[type="password"]:focus,
+input[type="text"]:focus,
+input[type="url"]:focus {
+    outline: none;
+    border-color: var(--primary-400);
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.18);
+    transform: translateY(-1px);
+}
+
+.field-wrapper {
+    position: relative;
+}
+
+.field-wrapper::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 1.1rem;
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(14, 165, 233, 0.6);
+    border-left: 0;
+    border-top: 0;
+    transform: translateY(-60%) rotate(45deg);
+    pointer-events: none;
+    transition: transform 0.25s ease;
+}
+
+.field-wrapper:focus-within::after {
+    transform: translateY(-40%) rotate(225deg);
+}
+
+select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: rgba(255, 255, 255, 0.95);
+    padding-right: 2.75rem;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.35rem;
+}
+
+.primary-btn {
+    margin-top: 1.75rem;
+    width: auto;
+    border: none;
+    border-radius: 18px;
+    padding: 1.05rem 1.5rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: #ffffff;
+    background: linear-gradient(135deg, var(--primary-500), var(--secondary-500));
+    box-shadow: 0 28px 55px rgba(14, 165, 233, 0.35);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8rem;
+    cursor: pointer;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.primary-btn:hover {
+    transform: translateY(-3px) scale(1.01);
+    box-shadow: 0 38px 70px rgba(14, 165, 233, 0.4);
+}
+
+.primary-btn:active {
+    transform: translateY(0) scale(0.995);
+}
+
+.primary-btn .icon {
+    width: 22px;
+    height: 22px;
+}
+
+.secondary-btn {
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    border-radius: 16px;
+    padding: 0.95rem 1.6rem;
+    background: rgba(255, 255, 255, 0.9);
+    color: var(--text-dark);
+    font-weight: 600;
+    font-size: 0.98rem;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.secondary-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 35px rgba(15, 23, 42, 0.16);
+    border-color: rgba(96, 165, 250, 0.6);
+}
+
+.secondary-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+}
+
+.secondary-btn[style*="none"] {
+    display: none !important;
+}
+
+.action-buttons {
+    margin-top: 1.75rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+}
+
+.action-buttons .primary-btn {
+    flex: 1 1 80px;
+    margin-top: 0;
+}
+
+.action-buttons .secondary-btn {
+    flex: 0 0 auto;
+}
+
+.status-notification {
+    display: none;
+    max-width: 42rem;
+    margin: 0 auto 1.5rem;
+}
+
+.status-notification.is-visible {
+    display: block;
+}
+
+.status-card {
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 20px;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.16);
+    overflow: hidden;
+}
+
+.hero-message-slot .status-notification {
+    margin: 0;
+    max-width: none;
+    width: 100%;
+    display: none;
+    align-items: stretch;
+    justify-content: center;
+    z-index: 1;
+}
+
+.hero-message-slot .status-notification.is-visible {
+    display: flex;
+}
+
+.hero-message-slot .status-card {
+    width: 100%;
+}
+
+.status-card-body {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 1rem 1.5rem;
+}
+
+.status-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--primary-600);
+    background: rgba(14, 165, 233, 0.1);
+}
+
+.status-icon-graphic,
+.status-dismiss-icon {
+    width: 22px;
+    height: 22px;
+    stroke-width: 1.8;
+}
+
+#statusMessage {
+    flex: 1;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-soft);
+    line-height: 1.4;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.status-dismiss {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 50%;
+    padding: 0.3rem;
+    color: rgba(71, 85, 105, 0.9);
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.status-dismiss:hover {
+    color: var(--text-dark);
+}
+
+.status-dismiss:focus-visible {
+    outline: 2px solid var(--primary-500);
+    outline-offset: 2px;
+}
+
+.status-progress {
+    height: 4px;
+    background: rgba(226, 232, 240, 0.8);
+}
+
+.status-progress-bar {
+    height: 100%;
+    width: 0;
+    background: var(--primary-500);
+    transition: width 0.35s ease;
+}
+
+.status-notification.is-error .status-card {
+    border-color: rgba(248, 113, 113, 0.35);
+    box-shadow: 0 18px 40px rgba(244, 63, 94, 0.18);
+}
+
+.status-notification.is-error #statusMessage {
+    color: #f43f5e;
+}
+
+.status-notification.is-error .status-progress-bar {
+    background: #ef4444;
+}
+
+.status-notification.is-error .status-icon {
+    background: rgba(254, 226, 226, 0.8);
+    color: #f43f5e;
+}
+
+.status-notification.is-success .status-card {
+    border-color: rgba(34, 197, 94, 0.35);
+    box-shadow: 0 18px 40px rgba(22, 163, 74, 0.18);
+}
+
+.status-notification.is-success #statusMessage {
+    color: #15803d;
+}
+
+.status-notification.is-success .status-progress-bar {
+    background: #22c55e;
+}
+
+.status-notification.is-success .status-icon {
+    background: rgba(187, 247, 208, 0.85);
+    color: #15803d;
+}
+
+.generated-output {
+    margin-top: 1.5rem;
+    display: none;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.generated-output input {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.95rem;
+    background: rgba(248, 250, 252, 0.9);
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.1);
+}
+
+.generated-output input[readonly] {
+    cursor: text;
+}
+
+.qr-output {
+    margin-top: 1.5rem;
+    display: none;
+    justify-content: center;
+}
+
+.qr-card {
+    padding: 1.75rem;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--border-soft);
+    box-shadow: 0 26px 60px rgba(15, 23, 42, 0.14);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    max-width: min(100%, 320px);
+    width: 100%;
+}
+
+#qrCode {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#qrCode canvas,
+#qrCode img {
+    width: 100% !important;
+    height: auto !important;
+    image-rendering: pixelated;
+    border-radius: 12px;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+}
+
+.qr-label {
+    font-size: 0.85rem;
+    color: var(--text-soft);
+    text-align: center;
+    word-break: break-word;
+}
+
+.host-card {
+    max-width: 680px;
+    margin: 1.5rem auto 0;
+    padding: 1.8rem 2.05rem;
+    border-radius: 26px;
+    box-shadow: 0 30px 70px rgba(15, 23, 42, 0.16);
+    display: none;
+    gap: 0.85rem;
+}
+
+.input-hint {
+    margin: 0;
+    font-size: 0.92rem;
+    color: var(--text-soft);
+}
+
+.char-counter {
+    font-size: 0.85rem;
+    color: var(--text-soft);
+    text-align: right;
+    margin-top: 0.65rem;
+    transition: color 0.25s ease;
+}
+
+.char-counter.warning {
+    color: #f97316;
+}
+
+.char-counter.danger {
+    color: #f43f5e;
+}
+
+.features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.9rem;
+    max-width: 920px;
+    margin: 0 auto;
+}
+
+.feature-card {
+    background: rgba(255, 255, 255, 0.96);
+    border-radius: 24px;
+    border: 1px solid var(--border-soft);
+    padding: 1.9rem;
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    text-align: center;
+    box-shadow: 0 22px 45px rgba(15, 23, 42, 0.14);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    transform-style: preserve-3d;
+}
+
+.feature-card:hover {
+    transform: translateY(-8px) rotateX(4deg);
+    box-shadow: 0 30px 60px rgba(15, 23, 42, 0.16);
+}
+
+.feature-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 54px;
+    height: 54px;
+    border-radius: 18px;
+    background: rgba(14, 165, 233, 0.12);
+    color: var(--primary-600);
+    margin-bottom: 1.25rem;
+    box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.12);
+}
+
+.feature-icon.secondary {
+    background: rgba(217, 70, 239, 0.12);
+    color: var(--secondary-600);
+}
+
+.feature-card h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.feature-card p {
+    margin: 0;
+    color: var(--text-soft);
+    line-height: 1.6;
+}
+
+.stats-section {
+    padding: 4.5rem 0;
+    background: rgba(255, 255, 255, 0.92);
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 2rem;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.stat-value.accent-primary {
+    color: var(--primary-600);
+}
+
+.stat-value.accent-secondary {
+    color: var(--secondary-600);
+}
+
+.stat-label {
+    color: var(--text-soft);
+    font-size: 1rem;
+    margin-top: 0.35rem;
+}
+
+.footer {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 4rem 0 3rem;
+}
+
+.footer-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 2.5rem;
+}
+
+.footer .brand-name {
+    color: #fff;
+}
+
+.footer p {
+    margin: 0;
+    color: rgba(148, 163, 184, 0.85);
+    line-height: 1.6;
+}
+
+.version-number {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.footer h4 {
+    margin: 0 0 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.footer ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.65rem;
+}
+
+.footer a {
+    color: rgba(148, 163, 184, 0.85);
+    text-decoration: none;
+    transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.footer a:hover {
+    color: #f8fafc;
+    transform: translateX(4px);
+}
+
+.footer-bottom {
+    margin-top: 3rem;
+    padding-top: 2.25rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.22);
+    text-align: center;
+    color: rgba(148, 163, 184, 0.75);
+    font-size: 0.95rem;
+}
+
+@media (max-width: 992px) {
+    .navbar {
+        width: min(96%, 960px);
+    }
+
+    .navbar-inner {
+        padding: 0.85rem 1.5rem;
+    }
+
+    .form-card {
+        padding: 2.35rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .nav-toggle {
+        display: inline-flex;
+    }
+
+    .nav-links {
+        position: absolute;
+        top: calc(100% + 0.75rem);
+        right: 1.5rem;
+        left: 1.5rem;
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 1.4rem;
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.95);
+        border: 1px solid rgba(226, 232, 240, 0.65);
+        box-shadow: 0 26px 60px rgba(15, 23, 42, 0.18);
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-10px);
+        transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+
+    .nav-links.is-open {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+    }
+
+    .nav-cta {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .hero {
+        padding-top: 1.5rem;
+    }
+
+    .hero-title {
+        font-size: 2.3rem;
+    }
+
+    .hero-subtitle {
+        font-size: 1.05rem;
+    }
+}
+
+@media (max-width: 600px) {
+    .navbar {
+        margin-top: 0.4rem;
+        border-radius: 20px;
+    }
+
+    .navbar-inner {
+        padding: 0.8rem 1.2rem;
+    }
+
+    .brand-name {
+        font-size: 1.15rem;
+    }
+
+    .form-card {
+        padding: 1.75rem;
+        border-radius: 22px;
+    }
+
+    textarea,
+    select,
+    input[type="password"],
+    input[type="text"],
+    input[type="url"] {
+        border-radius: 16px;
+    }
+
+    .primary-btn {
+        border-radius: 16px;
+    }
+
+    .action-buttons {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .action-buttons .primary-btn,
+    .action-buttons .secondary-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .features {
+        gap: 1.35rem;
+    }
+
+    .host-card {
+        padding: 1.6rem;
+    }
+
+    .status-card-body {
+        align-items: flex-start;
+    }
+
+    .status-icon {
+        margin-top: 0.2rem;
+    }
+
+    #statusMessage {
+        width: 100%;
+        margin-top: 0.2rem;
+        text-align: left;
+    }
+
+    .status-dismiss {
+        align-self: flex-start;
+    }
+
+}
+
+@media (max-width: 480px) {
+    .container {
+        width: 92%;
+    }
+
+    .hero-title {
+        font-size: 1.7rem;
+    }
+
+    .form-card {
+        padding: 1rem;
+    }
+
+    .feature-card {
+        padding: 1.5rem;
+    }
+
+    .footer {
+        text-align: center;
+    }
+
+    .footer-grid {
+        justify-content: center;
+        justify-items: center;
+    }
+
+    .footer ul {
+        justify-items: center;
+    }
+}
+
+@keyframes auroraFloat {
+    0% {
+        transform: translate3d(-20px, -20px, 0) scale(1.05);
+    }
+    50% {
+        transform: translate3d(10px, 10px, 0) scale(1.08);
+    }
+    100% {
+        transform: translate3d(-15px, 15px, 0) scale(1.03);
+    }
+}
+
+@keyframes glowShift {
+    0% {
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+        transform: translate3d(40px, -30px, 0) scale(1.1);
+    }
+    100% {
+        transform: translate3d(-30px, 30px, 0) scale(0.95);
+    }
+}
+</style>
+</head>
+<body>
+    <div class="ambient-bg"></div>
+
+    <nav class="navbar">
+        <div class="navbar-inner">
+            <div class="nav-brand">
+                <span class="icon-circle">
+                            <img src="favicon.svg" width="42" height="42" alt="favicon">
+                </span>
+                <span class="brand-name">Epha</span>
+            </div>
+            <button class="nav-toggle" type="button">
+                <span class="nav-toggle-bar"></span>
+            </button>
+            <div class="nav-links" id="primary-nav">
+                <a class="nav-link" href="https://github.com/x6prl/epha-ots/#what-etha-ots-does-not-protect-against">GitHub</a>
+                <a class="nav-link" href="https://github.com/x6prl/epha-ots/">Still be careful!</a>
+                <a class="nav-cta" href="https://github.com/x6prl/epha-ots/#support-the-development">Support us</a>
+            </div>
+        </div>
+    </nav>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <h1 class="hero-title">
+                    Share Secrets <span>Safely</span>
+                </h1>
+                <div class="hero-message-slot">
+                    <p id="heroSubtitle" class="hero-subtitle">
+                        Epha lets you share sensitive information with confidence. Your secrets self-destruct after being viewed, leaving no trace behind.
+                    </p>
+
+                    <!-- Status Notification -->
+                    <div id="statusNotification" class="status-notification" role="status" aria-live="polite">
+                        <div class="status-card">
+                            <div class="status-card-body">
+                                <span id="statusIcon" class="status-icon">
+                                    <svg class="status-icon-graphic" viewBox="0 0 24 24" fill="none" stroke="currentColor"></svg>
+                                </span>
+                                <div id="statusMessage"></div>
+                                <button id="closeStatus" class="status-dismiss" type="button">
+                                    <svg class="status-dismiss-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                        <path d="M6 18L18 6M6 6l12 12" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div class="status-progress">
+                                <div id="progressBar" class="status-progress-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+<!-- Secret Encryption Form -->
+                <div id="encryptionCard" class="form-card glass-effect is-visible">
+                    <div class="form-field">
+                        <label for="text">Your Secret Message</label>
+                        <textarea id="text" tabindex="1" autofocus rows="6" maxlength="5000" placeholder="Enter your confidential message here...&#10;Presss Ctrl+Enter to create and copy the link"></textarea>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-field" style ="display: none">
+                            <label for="expiresAfter">Expires After</label>
+                            <div class="field-wrapper">
+                                <select id="expiresAfter" tabindex="3">
+                                    <option>1 Hour</option>
+                                    <option>8 Hours</option>
+                                    <option>24 Hours</option>
+                                    <option>3 Days</option>
+                                    <option>7 Days</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-field">
+                            <label for="optionalPassword">Password (Optional)</label>
+                            <input id="optionalPassword" tabindex="2" type="password" placeholder="Add extra security">
+                        </div>
+                    </div>
+                    <div class="action-buttons">
+                        <button class="primary-btn" id="btnGetLink" tabindex="4" type="button">
+                            <svg class="icon" viewBox="0 0 24 24">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                            </svg>
+                            Create Secure Link
+                        </button>
+                        <button class="secondary-btn" id="btnCopyLink" tabindex="5" type="button" style="display:none">
+                            Copy Link
+                        </button>
+                        <button class="secondary-btn" id="btnGenerateQr" type="button" style="display:none">
+                            Generate QR
+                        </button>
+                    </div>
+                    <div class="generated-output" id="generatedWrap" style="display:none">
+                        <label for="generatedUrl">Generated URL</label>
+                        <input id="generatedUrl" type="text" readonly>
+                    </div>
+                    <div class="qr-output" id="qrWrap" style="display:none">
+                        <div class="qr-card">
+                            <div id="qrCode"></div>
+                        </div>
+                    </div>
+                </div>
+<!-- Secret Decryption Form -->
+                <div id="decryptionCard" class="form-card glass-effect decryption-card">
+                    <div class="decryption-card-header">
+                        <span class="icon-circle">
+                            <svg class="icon" viewBox="0 0 24 24">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                            </svg>
+                        </span>
+                        <div>
+                            <h2>Password Required</h2>
+                            <p>This secret is protected. Enter the password to finish decryption directly in your browser.</p>
+                        </div>
+                    </div>
+                    <div class="form-field">
+                        <label for="decryptionPassword">Secret Password</label>
+                        <input
+                            id="decryptionPassword"
+                            type="password"
+                            placeholder="Enter password"
+                            autocomplete="current-password"
+                        >
+                    </div>
+                    <div class="decryption-actions">
+                        <button id="decryptBtn" class="primary-btn" type="button">
+                            <svg class="icon" viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            </svg>
+                            Decrypt Secret
+                        </button>
+                    </div>
+                    <p class="input-hint decryption-note">Passwords are never sent to the server.</p>
+                </div>
+                <div class="host-card glass-effect">
+                    <label for="host">Service Origin</label>
+                    <input id="host" type="text" placeholder="https://host:port">
+                    <p class="input-hint">Set the base URL of your Epha service before sharing links.</p>
+                </div>
+
+                <div class="features">
+                    <article class="feature-card secret-card">
+                        <span class="feature-icon">
+                            <svg class="icon" viewBox="0 0 24 24">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"></path>
+                                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path>
+                                <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path>
+                                <line x1="1" y1="1" x2="23" y2="23"></line>
+                            </svg>
+                        </span>
+                        <h3>One-Time View</h3>
+                        <p>Your secret automatically destroys itself after being viewed once.</p>
+                    </article>
+
+                    <article class="feature-card secret-card">
+                        <span class="feature-icon secondary">
+                            <svg class="icon" viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                        </span>
+                        <h3>Time-Based Expiry</h3>
+                        <p>Only 1 hour of storing the secret.</p>
+                    </article>
+
+                    <article class="feature-card secret-card">
+                        <span class="feature-icon">
+                            <svg class="icon" viewBox="0 0 24 24">
+                                <path d="M21 2l-2 2"></path>
+                                <path d="M10 11a5.5 5.5 0 1 1-7.778 7.778A5.5 5.5 0 0 1 10 11z"></path>
+                                <path d="m10 11 5.5-5.5 3 3L22 7l-3-3"></path>
+                                <path d="m13.5 5.5 3.5-3.5"></path>
+                            </svg>
+                        </span>
+                        <h3>Password Protection</h3>
+                        <p>Add an extra layer of security with optional password encryption.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section class="stats-section">
+            <div class="container">
+                <div class="stats-grid">
+                    <div>
+                        <div class="stat-value accent-primary">SSSSSSSSSSSSSSSS</div>
+                        <div class="stat-label">Secrets Shared</div>
+                    </div>
+                    <div>
+                        <div class="stat-value accent-secondary">UUUUUUUUUUUUUUUU</div>
+                        <div class="stat-label">Uptime</div>
+                    </div>
+                    <div>
+                        <div class="stat-value accent-primary">AES 256-bit</div>
+                        <div class="stat-label">Military Grade Encryption</div>
+                    </div>
+                    <!-- <div>
+                        <div class="stat-value accent-secondary">0</div>
+                        <div class="stat-label">Data Breaches</div>
+                    </div> -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div>
+                    <div class="nav-brand">
+                        <span class="icon-circle secondary">
+                            <img src="favicon.svg" width="42" height="42" alt="favicon">
+                        </span>
+                        <span class="brand-name">Epha</span>
+                    </div>
+                    <p>Secure secret sharing made simple and safe.</p>
+                    <p>
+                        Version <span class="version-number">VVVVVVVVVVVVVVVV</span>
+                    </p>
+                </div>
+                <div>
+                    <h4>About</h4>
+                    <ul>
+                        <li><a href="https://github.com/x6prl/epha-ots/">GitHub</a></li>
+                        <li><a href="https://github.com/x6prl/epha-ots/blob/master/README.md">Readme</a></li>
+                        <li><a href="https://github.com/x6prl/epha-ots/blob/master/LICENSE">License</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4>Contact</h4>
+                    <ul>
+                        <li><a href="mailto:x6prlie@gmail.com">Email</a></li>
+                        <li><a href="https://t.me/x6prl">Telegram</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2025 Viktor Filinkov</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>(function(){
+var QRCode;(()=>{function e(t){this.mode=n.MODE_8BIT_BYTE,this.data=t,this.parsedData=[];for(var e=0,r=this.data.length;e<r;e++){var o=[],i=this.data.charCodeAt(e);65536<i?(o[0]=240|(1835008&i)>>>18,o[1]=128|(258048&i)>>>12,o[2]=128|(4032&i)>>>6,o[3]=128|63&i):2048<i?(o[0]=224|(61440&i)>>>12,o[1]=128|(4032&i)>>>6,o[2]=128|63&i):128<i?(o[0]=192|(1984&i)>>>6,o[1]=128|63&i):o[0]=i,this.parsedData.push(o)}this.parsedData=Array.prototype.concat.apply([],this.parsedData),this.parsedData.length!=this.data.length&&(this.parsedData.unshift(191),this.parsedData.unshift(187),this.parsedData.unshift(239))}function h(t,e){this.typeNumber=t,this.errorCorrectLevel=e,this.modules=null,this.moduleCount=0,this.dataCache=null,this.dataList=[]}e.prototype={getLength:function(t){return this.parsedData.length},write:function(t){for(var e=0,r=this.parsedData.length;e<r;e++)t.put(this.parsedData[e],8)}},h.prototype={addData:function(t){t=new e(t);this.dataList.push(t),this.dataCache=null},isDark:function(t,e){if(t<0||this.moduleCount<=t||e<0||this.moduleCount<=e)throw new Error(t+","+e);return this.modules[t][e]},getModuleCount:function(){return this.moduleCount},make:function(){this.makeImpl(!1,this.getBestMaskPattern())},makeImpl:function(t,e){this.moduleCount=4*this.typeNumber+17,this.modules=new Array(this.moduleCount);for(var r=0;r<this.moduleCount;r++){this.modules[r]=new Array(this.moduleCount);for(var o=0;o<this.moduleCount;o++)this.modules[r][o]=null}this.setupPositionProbePattern(0,0),this.setupPositionProbePattern(this.moduleCount-7,0),this.setupPositionProbePattern(0,this.moduleCount-7),this.setupPositionAdjustPattern(),this.setupTimingPattern(),this.setupTypeInfo(t,e),7<=this.typeNumber&&this.setupTypeNumber(t),null==this.dataCache&&(this.dataCache=h.createData(this.typeNumber,this.errorCorrectLevel,this.dataList)),this.mapData(this.dataCache,e)},setupPositionProbePattern:function(t,e){for(var r=-1;r<=7;r++)if(!(t+r<=-1||this.moduleCount<=t+r))for(var o=-1;o<=7;o++)e+o<=-1||this.moduleCount<=e+o||(this.modules[t+r][e+o]=0<=r&&r<=6&&(0==o||6==o)||0<=o&&o<=6&&(0==r||6==r)||2<=r&&r<=4&&2<=o&&o<=4)},getBestMaskPattern:function(){for(var t=0,e=0,r=0;r<8;r++){this.makeImpl(!0,r);var o=m.getLostPoint(this);(0==r||o<t)&&(t=o,e=r)}return e},createMovieClip:function(t,e,r){var o=t.createEmptyMovieClip(e,r);this.make();for(var i=0;i<this.modules.length;i++)for(var n=+i,a=0;a<this.modules[i].length;a++){var s=+a;this.modules[i][a]&&(o.beginFill(0,100),o.moveTo(s,n),o.lineTo(1+s,n),o.lineTo(1+s,1+n),o.lineTo(s,1+n),o.endFill())}return o},setupTimingPattern:function(){for(var t=8;t<this.moduleCount-8;t++)null==this.modules[t][6]&&(this.modules[t][6]=t%2==0);for(var e=8;e<this.moduleCount-8;e++)null==this.modules[6][e]&&(this.modules[6][e]=e%2==0)},setupPositionAdjustPattern:function(){for(var t=m.getPatternPosition(this.typeNumber),e=0;e<t.length;e++)for(var r=0;r<t.length;r++){var o=t[e],i=t[r];if(null==this.modules[o][i])for(var n=-2;n<=2;n++)for(var a=-2;a<=2;a++)this.modules[o+n][i+a]=-2==n||2==n||-2==a||2==a||0==n&&0==a}},setupTypeNumber:function(t){for(var e=m.getBCHTypeNumber(this.typeNumber),r=0;r<18;r++){var o=!t&&1==(e>>r&1);this.modules[Math.floor(r/3)][r%3+this.moduleCount-8-3]=o}for(r=0;r<18;r++){o=!t&&1==(e>>r&1);this.modules[r%3+this.moduleCount-8-3][Math.floor(r/3)]=o}},setupTypeInfo:function(t,e){for(var e=this.errorCorrectLevel<<3|e,r=m.getBCHTypeInfo(e),o=0;o<15;o++){var i=!t&&1==(r>>o&1);o<6?this.modules[o][8]=i:o<8?this.modules[o+1][8]=i:this.modules[this.moduleCount-15+o][8]=i}for(o=0;o<15;o++){i=!t&&1==(r>>o&1);o<8?this.modules[8][this.moduleCount-o-1]=i:o<9?this.modules[8][15-o-1+1]=i:this.modules[8][15-o-1]=i}this.modules[this.moduleCount-8][8]=!t},mapData:function(t,e){for(var r=-1,o=this.moduleCount-1,i=7,n=0,a=this.moduleCount-1;0<a;a-=2)for(6==a&&a--;;){for(var s,h,l=0;l<2;l++)null==this.modules[o][a-l]&&(s=!1,n<t.length&&(s=1==(t[n]>>>i&1)),h=m.getMask(e,o,a-l),this.modules[o][a-l]=s=h?!s:s,-1==--i)&&(n++,i=7);if((o+=r)<0||this.moduleCount<=o){o-=r,r=-r;break}}}},h.PAD0=236,h.PAD1=17,h.createData=function(t,e,r){for(var o=p.getRSBlocks(t,e),i=new C,n=0;n<r.length;n++){var a=r[n];i.put(a.mode,4),i.put(a.getLength(),m.getLengthInBits(a.mode,t)),a.write(i)}for(var s=0,n=0;n<o.length;n++)s+=o[n].dataCount;if(i.getLengthInBits()>8*s)throw new Error("code length overflow. ("+i.getLengthInBits()+">"+8*s+")");for(i.getLengthInBits()+4<=8*s&&i.put(0,4);i.getLengthInBits()%8!=0;)i.putBit(!1);for(;;){if(i.getLengthInBits()>=8*s)break;if(i.put(h.PAD0,8),i.getLengthInBits()>=8*s)break;i.put(h.PAD1,8)}return h.createBytes(i,o)},h.createBytes=function(t,e){for(var r=0,o=0,i=0,n=new Array(e.length),a=new Array(e.length),s=0;s<e.length;s++){var h=e[s].dataCount,l=e[s].totalCount-h,o=Math.max(o,h),i=Math.max(i,l);n[s]=new Array(h);for(var u=0;u<n[s].length;u++)n[s][u]=255&t.buffer[u+r];r+=h;var h=m.getErrorCorrectPolynomial(l),g=new _(n[s],h.getLength()-1).mod(h);a[s]=new Array(h.getLength()-1);for(u=0;u<a[s].length;u++){var d=u+g.getLength()-a[s].length;a[s][u]=0<=d?g.get(d):0}}for(var f=0,u=0;u<e.length;u++)f+=e[u].totalCount;for(var c=new Array(f),p=0,u=0;u<o;u++)for(s=0;s<e.length;s++)u<n[s].length&&(c[p++]=n[s][u]);for(u=0;u<i;u++)for(s=0;s<e.length;s++)u<a[s].length&&(c[p++]=a[s][u]);return c};for(var n={MODE_NUMBER:1,MODE_ALPHA_NUM:2,MODE_8BIT_BYTE:4,MODE_KANJI:8},l={L:1,M:0,Q:3,H:2},o=0,i=1,a=2,s=3,u=4,g=5,d=6,f=7,m={PATTERN_POSITION_TABLE:[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]],G15:1335,G18:7973,G15_MASK:21522,getBCHTypeInfo:function(t){for(var e=t<<10;0<=m.getBCHDigit(e)-m.getBCHDigit(m.G15);)e^=m.G15<<m.getBCHDigit(e)-m.getBCHDigit(m.G15);return(t<<10|e)^m.G15_MASK},getBCHTypeNumber:function(t){for(var e=t<<12;0<=m.getBCHDigit(e)-m.getBCHDigit(m.G18);)e^=m.G18<<m.getBCHDigit(e)-m.getBCHDigit(m.G18);return t<<12|e},getBCHDigit:function(t){for(var e=0;0!=t;)e++,t>>>=1;return e},getPatternPosition:function(t){return m.PATTERN_POSITION_TABLE[t-1]},getMask:function(t,e,r){switch(t){case o:return(e+r)%2==0;case i:return e%2==0;case a:return r%3==0;case s:return(e+r)%3==0;case u:return(Math.floor(e/2)+Math.floor(r/3))%2==0;case g:return e*r%2+e*r%3==0;case d:return(e*r%2+e*r%3)%2==0;case f:return(e*r%3+(e+r)%2)%2==0;default:throw new Error("bad maskPattern:"+t)}},getErrorCorrectPolynomial:function(t){for(var e=new _([1],0),r=0;r<t;r++)e=e.multiply(new _([1,c.gexp(r)],0));return e},getLengthInBits:function(t,e){if(1<=e&&e<10)switch(t){case n.MODE_NUMBER:return 10;case n.MODE_ALPHA_NUM:return 9;case n.MODE_8BIT_BYTE:case n.MODE_KANJI:return 8;default:throw new Error("mode:"+t)}else if(e<27)switch(t){case n.MODE_NUMBER:return 12;case n.MODE_ALPHA_NUM:return 11;case n.MODE_8BIT_BYTE:return 16;case n.MODE_KANJI:return 10;default:throw new Error("mode:"+t)}else{if(!(e<41))throw new Error("type:"+e);switch(t){case n.MODE_NUMBER:return 14;case n.MODE_ALPHA_NUM:return 13;case n.MODE_8BIT_BYTE:return 16;case n.MODE_KANJI:return 12;default:throw new Error("mode:"+t)}}},getLostPoint:function(t){for(var e=t.getModuleCount(),r=0,o=0;o<e;o++)for(var i=0;i<e;i++){for(var n=0,a=t.isDark(o,i),s=-1;s<=1;s++)if(!(o+s<0||e<=o+s))for(var h=-1;h<=1;h++)i+h<0||e<=i+h||0==s&&0==h||a==t.isDark(o+s,i+h)&&n++;5<n&&(r+=3+n-5)}for(o=0;o<e-1;o++)for(i=0;i<e-1;i++){var l=0;t.isDark(o,i)&&l++,t.isDark(o+1,i)&&l++,t.isDark(o,i+1)&&l++,t.isDark(o+1,i+1)&&l++,0!=l&&4!=l||(r+=3)}for(o=0;o<e;o++)for(i=0;i<e-6;i++)t.isDark(o,i)&&!t.isDark(o,i+1)&&t.isDark(o,i+2)&&t.isDark(o,i+3)&&t.isDark(o,i+4)&&!t.isDark(o,i+5)&&t.isDark(o,i+6)&&(r+=40);for(i=0;i<e;i++)for(o=0;o<e-6;o++)t.isDark(o,i)&&!t.isDark(o+1,i)&&t.isDark(o+2,i)&&t.isDark(o+3,i)&&t.isDark(o+4,i)&&!t.isDark(o+5,i)&&t.isDark(o+6,i)&&(r+=40);for(var u=0,i=0;i<e;i++)for(o=0;o<e;o++)t.isDark(o,i)&&u++;return r+=10*(Math.abs(100*u/e/e-50)/5)}},c={glog:function(t){if(t<1)throw new Error("glog("+t+")");return c.LOG_TABLE[t]},gexp:function(t){for(;t<0;)t+=255;for(;256<=t;)t-=255;return c.EXP_TABLE[t]},EXP_TABLE:new Array(256),LOG_TABLE:new Array(256)},t=0;t<8;t++)c.EXP_TABLE[t]=1<<t;for(t=8;t<256;t++)c.EXP_TABLE[t]=c.EXP_TABLE[t-4]^c.EXP_TABLE[t-5]^c.EXP_TABLE[t-6]^c.EXP_TABLE[t-8];for(t=0;t<255;t++)c.LOG_TABLE[c.EXP_TABLE[t]]=t;function _(t,e){if(null==t.length)throw new Error(t.length+"/"+e);for(var r=0;r<t.length&&0==t[r];)r++;this.num=new Array(t.length-r+e);for(var o=0;o<t.length-r;o++)this.num[o]=t[o+r]}function p(t,e){this.totalCount=t,this.dataCount=e}function C(){this.buffer=[],this.length=0}_.prototype={get:function(t){return this.num[t]},getLength:function(){return this.num.length},multiply:function(t){for(var e=new Array(this.getLength()+t.getLength()-1),r=0;r<this.getLength();r++)for(var o=0;o<t.getLength();o++)e[r+o]^=c.gexp(c.glog(this.get(r))+c.glog(t.get(o)));return new _(e,0)},mod:function(t){if(this.getLength()-t.getLength()<0)return this;for(var e=c.glog(this.get(0))-c.glog(t.get(0)),r=new Array(this.getLength()),o=0;o<this.getLength();o++)r[o]=this.get(o);for(o=0;o<t.getLength();o++)r[o]^=c.gexp(c.glog(t.get(o))+e);return new _(r,0).mod(t)}},p.RS_blk_tABLE=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]],p.getRSBlocks=function(t,e){var r=p.getRsBlockTable(t,e);if(null==r)throw new Error("bad rs block @ typeNumber:"+t+"/errorCorrectLevel:"+e);for(var o=r.length/3,i=[],n=0;n<o;n++)for(var a=r[3*n+0],s=r[3*n+1],h=r[3*n+2],l=0;l<a;l++)i.push(new p(s,h));return i},p.getRsBlockTable=function(t,e){switch(e){case l.L:return p.RS_blk_tABLE[4*(t-1)+0];case l.M:return p.RS_blk_tABLE[4*(t-1)+1];case l.Q:return p.RS_blk_tABLE[4*(t-1)+2];case l.H:return p.RS_blk_tABLE[4*(t-1)+3];default:return}},C.prototype={get:function(t){var e=Math.floor(t/8);return 1==(this.buffer[e]>>>7-t%8&1)},put:function(t,e){for(var r=0;r<e;r++)this.putBit(1==(t>>>e-r-1&1))},getLengthInBits:function(){return this.length},putBit:function(t){var e=Math.floor(this.length/8);this.buffer.length<=e&&this.buffer.push(0),t&&(this.buffer[e]|=128>>>this.length%8),this.length++}};var v=[[17,14,11,7],[32,26,20,14],[53,42,32,24],[78,62,46,34],[106,84,60,44],[134,106,74,58],[154,122,86,64],[192,152,108,84],[230,180,130,98],[271,213,151,119],[321,251,177,137],[367,287,203,155],[425,331,241,177],[458,362,258,194],[520,412,292,220],[586,450,322,250],[644,504,364,280],[718,560,394,310],[792,624,442,338],[858,666,482,382],[929,711,509,403],[1003,779,565,439],[1091,857,611,461],[1171,911,661,511],[1273,997,715,535],[1367,1059,751,593],[1465,1125,805,625],[1528,1190,868,658],[1628,1264,908,698],[1732,1370,982,742],[1840,1452,1030,790],[1952,1538,1112,842],[2068,1628,1168,898],[2188,1722,1228,958],[2303,1809,1283,983],[2431,1911,1351,1051],[2563,1989,1423,1093],[2699,2099,1499,1139],[2809,2213,1579,1219],[2953,2331,1663,1273]];function w(){var t=!1,e=navigator.userAgent;return t=/android/i.test(e)&&(t=!0,e=e.toString().match(/android ([0-9]\.[0-9])/i))&&e[1]?parseFloat(e[1]):t}function D(t){t=Number(t.border);return 0<t?t:0}r.prototype.draw=function(t){var e=this._htOption,r=this._el,o=t.getModuleCount(),i=D(e),n=e.width-2*i,a=e.height-2*i;if(n<=0||a<=0)throw new Error("QRCode border is too large.");var s=n/o,h=a/o;function l(t,e){var r,o=document.createElementNS("http://www.w3.org/2000/svg",t);for(r in e)e.hasOwnProperty(r)&&o.setAttribute(r,e[r]);return o}this.clear();var u=l("svg",{viewBox:"0 0 "+String(e.width)+" "+String(e.height),width:"100%",height:"100%",fill:e.colorLight});u.setAttributeNS("http://www.w3.org/2000/xmlns/","xmlns:xlink","http://www.w3.org/1999/xlink"),r.appendChild(u),u.appendChild(l("rect",{fill:e.colorLight,width:String(e.width),height:String(e.height)})),u.appendChild(l("rect",{fill:e.colorDark,width:String(s),height:String(h),id:"template"}));for(var g=0;g<o;g++)for(var d,f=0;f<o;f++)t.isDark(g,f)&&((d=l("use",{x:String(i+f*s),y:String(i+g*h)})).setAttributeNS("http://www.w3.org/1999/xlink","href","#template"),u.appendChild(d))},r.prototype.clear=function(){for(;this._el.hasChildNodes();)this._el.removeChild(this._el.lastChild)};var y=r;function r(t,e){this._el=t,this._htOption=e}var A="svg"===document.documentElement.tagName.toLowerCase()?y:"undefined"==typeof CanvasRenderingContext2D?(E.prototype.draw=function(t){var e=this._htOption,r=this._el,o=t.getModuleCount(),i=D(e),n=e.width-2*i,a=e.height-2*i;if(n<=0||a<=0)throw new Error("QRCode border is too large.");for(var s=n/o,h=a/o,l=(r.style.padding=i+"px",r.style.backgroundColor=e.colorLight,['<table style="border:0;border-collapse:collapse;">']),u=0;u<o;u++){l.push("<tr>");for(var g=0;g<o;g++)l.push('<td style="border:0;border-collapse:collapse;padding:0;margin:0;width:'+s+"px;height:"+h+"px;background-color:"+(t.isDark(u,g)?e.colorDark:e.colorLight)+';"></td>');l.push("</tr>")}l.push("</table>"),r.innerHTML=l.join("");n=r.childNodes[0],a=(e.width-2*i-n.offsetWidth)/2,r=(e.height-2*i-n.offsetHeight)/2,a=Math.max(0,a),r=Math.max(0,r);n.style.margin=r+"px "+a+"px"},E.prototype.clear=function(){this._el.innerHTML="",this._elStyleCache&&(this._el.style.padding=this._elStyleCache.padding,this._el.style.backgroundColor=this._elStyleCache.backgroundColor)},E):function(){function t(){this._elImage.src=this._elCanvas.toDataURL("image/png"),this._elImage.style.display="block",this._elCanvas.style.display="none"}var u,g;this._android&&this._android<=2.1&&(u=1/window.devicePixelRatio,g=CanvasRenderingContext2D.prototype.drawImage,CanvasRenderingContext2D.prototype.drawImage=function(t,e,r,o,i,n,a,s,h){if("nodeName"in t&&/img/i.test(t.nodeName))for(var l=arguments.length-1;1<=l;l--)arguments[l]=arguments[l]*u;else void 0===s&&(arguments[1]*=u,arguments[2]*=u,arguments[3]*=u,arguments[4]*=u);g.apply(this,arguments)});function e(t,e){this._bIsPainted=!1,this._android=w(),this._htOption=e,this._elCanvas=document.createElement("canvas"),this._elCanvas.width=e.width,this._elCanvas.height=e.height,t.appendChild(this._elCanvas),this._el=t,this._oContext=this._elCanvas.getContext("2d"),this._bIsPainted=!1,this._elImage=document.createElement("img"),this._elImage.alt="Scan me!",this._elImage.style.display="none",this._el.appendChild(this._elImage),this._bSupportDataURI=null}return e.prototype.draw=function(t){var e=this._elImage,r=this._oContext,o=this._htOption,i=t.getModuleCount(),n=D(o),a=o.width-2*n,s=o.height-2*n;if(a<=0||s<=0)throw new Error("QRCode border is too large.");var h=a/i,l=s/i,u=Math.round(h),g=Math.round(l);e.style.display="none",this.clear(),r.fillStyle=o.colorLight,r.fillRect(0,0,o.width,o.height);for(var d=0;d<i;d++)for(var f=0;f<i;f++){var c=t.isDark(d,f),p=n+f*h,m=n+d*l;r.strokeStyle=c?o.colorDark:o.colorLight,r.lineWidth=1,r.fillStyle=c?o.colorDark:o.colorLight,r.fillRect(p,m,h,l),r.strokeRect(Math.floor(p)+.5,Math.floor(m)+.5,u,g),r.strokeRect(Math.ceil(p)-.5,Math.ceil(m)-.5,u,g)}this._bIsPainted=!0},e.prototype.makeImage=function(){this._bIsPainted&&!function(t,e){var r=this;r._fFail=e,r._fSuccess=t,null===r._bSupportDataURI?((e=document.createElement("img")).onabort=t=function(){r._bSupportDataURI=!1,r._fFail&&r._fFail.call(r)},e.onerror=t,e.onload=function(){r._bSupportDataURI=!0,r._fSuccess&&r._fSuccess.call(r)},e.src="data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg=="):!0===r._bSupportDataURI&&r._fSuccess?r._fSuccess.call(r):!1===r._bSupportDataURI&&r._fFail&&r._fFail.call(r)}.call(this,t)},e.prototype.isPainted=function(){return this._bIsPainted},e.prototype.clear=function(){this._oContext.clearRect(0,0,this._elCanvas.width,this._elCanvas.height),this._bIsPainted=!1},e.prototype.round=function(t){return t&&Math.floor(1e3*t)/1e3},e}();function E(t,e){this._el=t,this._htOption=e,this._elStyleCache={padding:t.style.padding,backgroundColor:t.style.backgroundColor}}function b(t,e){for(var r,o=1,i=(t=t,(r=encodeURI(t).toString().replace(/\%[0-9a-fA-F]{2}/g,"a")).length+(r.length!=t?3:0)),n=0,a=v.length;n<=a;n++){var s=0;switch(e){case l.L:s=v[n][0];break;case l.M:s=v[n][1];break;case l.Q:s=v[n][2];break;case l.H:s=v[n][3]}if(i<=s)break;o++}if(v.length<o)throw new Error("Too long data");return o}(QRCode=function(t,e){if(this._htOption={width:256,height:256,border:0,typeNumber:4,colorDark:"#000000",colorLight:"#ffffff",correctLevel:l.H},e="string"==typeof e?{text:e}:e)for(var r in e)this._htOption[r]=e[r];this._htOption.border=D(this._htOption),"string"==typeof t&&(t=document.getElementById(t)),this._htOption.useSVG&&(A=y),this._android=w(),this._el=t,this._oQRCode=null,this._oDrawing=new A(this._el,this._htOption),this._htOption.text&&this.makeCode(this._htOption.text)}).prototype.makeCode=function(t){this._oQRCode=new h(b(t,this._htOption.correctLevel),this._htOption.correctLevel),this._oQRCode.addData(t),this._oQRCode.make(),this._el.title=t,this._oDrawing.draw(this._oQRCode),this.makeImage()},QRCode.prototype.makeImage=function(){"function"==typeof this._oDrawing.makeImage&&(!this._android||3<=this._android)&&this._oDrawing.makeImage()},QRCode.prototype.clear=function(){this._oDrawing.clear()},QRCode.CorrectLevel=l})();
+if (typeof globalThis !== "undefined" && typeof QRCode !== "undefined") { globalThis.QRCode = QRCode; }
+let $=e=>document.getElementById(e),encoder=new TextEncoder,decoder=new TextDecoder("utf-8",{fatal:!1}),HKDF_INFO_ID=encoder.encode("blob-id"),ID_REGEX=/^[A-Za-z0-9_-]{16,}$/,KEY_SIZE=32,NONCE_SIZE=12,SALT_SIZE=16,ID_SIZE=16,BLOB_TYPE_SIZE=2,BLOB_TYPE_TEXT=new Uint8Array([19,55]),BLOB_TYPE_PASSWORD=new Uint8Array([115,55]),BLOB_TYPE_TEXT_VALUE=4919,BLOB_TYPE_PASSWORD_VALUE=29495,BLOB_SIZE_MAX=131072,PBKDF2_ITERATIONS=8e5,PBKDF2_HASH="SHA-256",HKDF_HASH="SHA-256",QRCODE_SIZE=220,QRCODE_BORDER=10,QRCODE_CORRECT_LEVEL=1,state={id:null,bK:null,link:null,qrVisible:!1,pendingSecret:null,originalPlaceholder:null},qrInstance=null,STATUS_ICON_PATHS={success:'<path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>',error:'<path d="M12 7v7" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 17h.01" stroke-linecap="round" stroke-linejoin="round"/>',info:'<path d="M12 8h.01" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"/>'},isMacLike="undefined"!=typeof navigator&&/(Mac|iPhone|iPad|iPod)/i.test(navigator.platform||navigator.userAgent||"");function normalizeOrigin(e){return e.replace(/\/+$/,"")}function clearLocationHash(){if("undefined"!=typeof window)try{var e;"undefined"!=typeof history&&"function"==typeof history.replaceState?(e=window.location.pathname+window.location.search,history.replaceState(null,"",e)):window.location.hash=""}catch{window.location.hash=""}}function setStatus(e,t=!1){var r=$("statusNotification"),n=$("statusMessage"),a=$("heroSubtitle"),i=$("statusIcon"),i=i?i.querySelector(".status-icon-graphic"):null,s=$("progressBar");e?(n.textContent=e,r.classList.add("is-visible"),r.classList.toggle("is-success",!!t),r.classList.toggle("is-error",!t),a.classList.add("is-hidden"),e=t?"success":"error",i.innerHTML=STATUS_ICON_PATHS[e]||STATUS_ICON_PATHS.info||"",s.style.transition="none",s.style.width="0%",s.offsetWidth,s.style.transition="",s.style.width="100%"):(n.textContent="",r.classList.remove("is-visible","is-success","is-error"),s.style.width="0%",i.innerHTML="",a.classList.remove("is-hidden"))}function clearPendingSecret(){var e=state.pendingSecret;e&&(e.ciphertext&&e.ciphertext.fill(0),e.nonce&&e.nonce.fill(0),e.salt&&e.salt.fill(0),state.pendingSecret=null)}function setDecryptionCardVisible(e){var t=$("decryptionCard"),r=$("encryptionCard");e?(t.classList.add("is-visible"),r.classList.remove("is-visible")):(t.classList.remove("is-visible"),r.classList.add("is-visible"),(e=$("decryptionPassword"))&&(e.value=""))}function lockTextarea(e){var t,r=$("text");null===state.originalPlaceholder&&(t=r.getAttribute("placeholder"),state.originalPlaceholder="string"==typeof t?t:""),e?(r.classList.add("textarea-locked"),r.setAttribute("readonly","true"),r.setAttribute("placeholder","Secret will appear here after you decrypt it.")):(r.classList.remove("textarea-locked"),r.removeAttribute("readonly"),null!==state.originalPlaceholder&&(""===state.originalPlaceholder?r.removeAttribute("placeholder"):r.setAttribute("placeholder",state.originalPlaceholder))),r.dispatchEvent(new Event("input",{bubbles:!0}))}function cloneBytes(e){var t;return e instanceof Uint8Array?((t=new Uint8Array(e.length)).set(e),t):null}function bytesToHex(t){let r="";for(let e=0;e<t.length;e++)r+=t[e].toString(16).padStart(2,"0");return r}function equal16B(e,t){e=new Uint32Array(e.buffer,e.byteOffset,4),t=new Uint32Array(t.buffer,t.byteOffset,4);return!(e[0]^t[0]|e[1]^t[1]|e[2]^t[2]|e[3]^t[3])}function updateQr(){var t=$("qrWrap"),r=$("qrCode");if(t&&r){var n=state.link;if(state.qrVisible&&n)try{if("function"!=typeof window.QRCode)throw new Error("QR renderer unavailable");qrInstance?"function"==typeof qrInstance.clear&&qrInstance.clear():qrInstance=new QRCode(r,{width:QRCODE_SIZE,height:QRCODE_SIZE,border:QRCODE_BORDER,colorDark:"#000000",colorLight:"#ffffff",correctLevel:0==QRCODE_CORRECT_LEVEL?QRCode.CorrectLevel.L:QRCode.CorrectLevel.H}),qrInstance.makeCode(n),t.style.display="flex"}catch(e){console.error(e),t.style.display="none",qrInstance&&"function"==typeof qrInstance.clear&&qrInstance.clear(),r.innerHTML="",qrInstance=null,state.qrVisible=!1;n=$("btnGenerateQr");n&&(n.textContent="Generate QR"),setStatus(e.message||String(e))}else t.style.display="none",qrInstance&&"function"==typeof qrInstance.clear&&qrInstance.clear(),r.innerHTML="",qrInstance=null}}function setLink(r,n,a){let i=$("generatedWrap"),s=$("generatedUrl"),l=$("btnCopyLink"),o=$("btnGenerateQr");var c=()=>{state.id=null,state.bK=null,state.link=null,state.qrVisible=!1,i&&(i.style.display="none"),s&&(s.value=""),l&&(l.style.display="none"),o&&(o.style.display="none",o.textContent="Generate QR")};if(r&&n&&a){let e=null,t=null;try{var d=normalizeOrigin(r);if(!(e=base64UrlDecode(a))||e.length!==KEY_SIZE)throw new Error("Key length mismatch");if(!(t=base64UrlDecode(n))||t.length!==ID_SIZE)throw new Error("ID length mismatch");var u=base64UrlEncode(e),p=base64UrlEncode(t),y=(state.link=d+"/#"+p+"/"+u,state.id=p,state.bK=u,i&&(i.style.display="flex"),s&&(s.value=state.link),l&&(l.style.display="inline-block"),$("host"));y&&(y.value=d)}catch(e){return console.error(e),setStatus(e.message||String(e)),c(),void updateQr()}finally{e&&e.fill(0),t&&t.fill(0)}o&&(o.style.display=state.link?"inline-block":"none",o.textContent=state.qrVisible?"Hide QR":"Generate QR")}else c();updateQr()}function getOrigin(){var e=$("host"),t=(6<e.value.length?e.value:"https://local.tanuki-gecko.ts.net").trim();if(!t)throw new Error("Service origin is empty");let r;try{r=new URL(t)}catch{throw new Error("Invalid service origin URL")}if(r.username||r.password)throw new Error("Origin must not include credentials");if(r.pathname&&"/"!==r.pathname||r.search||r.hash)throw new Error("Origin must not include path, query, or fragment");var t="localhost"===r.hostname||"127.0.0.1"===r.hostname||"::1"===r.hostname;if("https:"===r.protocol||t)return t=r.origin,e&&e.value!==t&&(e.value=t),t;throw new Error("Service origin must use https://")}function base64UrlEncode(t){if(!(t instanceof Uint8Array))throw new TypeError("Expected Uint8Array");let r="";for(let e=0;e<t.length;e++)r+=String.fromCharCode(t[e]);return btoa(r).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"")}function base64UrlDecode(e){try{var t=e.replace(/-/g,"+").replace(/_/g,"/"),r=t.length%4,n=t+(r?"====".slice(r):""),a=atob(n),i=new Uint8Array(a.length);for(let e=0;e<a.length;e++)i[e]=a.charCodeAt(e);return i}catch(e){throw new Error("Invalid base64 data")}}async function deriveIdFromKeyAndSalt(e,t){e=await crypto.subtle.importKey("raw",e,"HKDF",!1,["deriveBits"]),t=await crypto.subtle.deriveBits({name:"HKDF",hash:HKDF_HASH,salt:t,info:HKDF_INFO_ID},e,8*ID_SIZE);return new Uint8Array(t)}async function derivePasswordKey(e,t,r){e=encoder.encode(e);let n;try{n=await crypto.subtle.importKey("raw",e,"PBKDF2",!1,["deriveKey"])}finally{e.fill(0)}return await crypto.subtle.deriveKey({name:"PBKDF2",salt:t,iterations:PBKDF2_ITERATIONS,hash:PBKDF2_HASH},n,{name:"AES-GCM",length:8*KEY_SIZE},!1,r)}function parseLocationHash(e){if(!e)return null;let t=e.trim();try{var r=new URL(t);t=r.hash||""}catch{}var e=(t=t.startsWith("#")?t.slice(1):t).indexOf("#"),r=(t=(t=0<=e?t.slice(e+1):t).replace(/^\/+/,"")).split("/");return 2===r.length&&(e=r[0].trim(),r=r[1].trim(),e)&&r&&ID_REGEX.test(e)&&r?{id:e,bK:r}:null}async function sendSecret(e=!1){setStatus(""),clearPendingSecret(),lockTextarea(!0);let t=null,r=null,n=null,a=null,i=null,s=null,l=null,o=null;var c;try{var d,u,p=getOrigin(),y=$("text"),h=$("optionalPassword"),f=h.value,E="string"==typeof f&&0<f.length,w=(i=encoder.encode(y.value),t=crypto.getRandomValues(new Uint8Array(KEY_SIZE)),r=crypto.getRandomValues(new Uint8Array(NONCE_SIZE)),n=crypto.getRandomValues(new Uint8Array(SALT_SIZE)),c=base64UrlEncode(a=await deriveIdFromKeyAndSalt(t,n)),encoder.encode("id="+c)),v=(E&&(d=await derivePasswordKey(f,n,["encrypt"]),u=await crypto.subtle.encrypt({name:"AES-GCM",iv:r,additionalData:w},d,i),i.fill(0),i=new Uint8Array(u)),E?BLOB_TYPE_PASSWORD:BLOB_TYPE_TEXT),S=((s=new Uint8Array(BLOB_TYPE_SIZE+i.length)).set(v,0),s.set(i,BLOB_TYPE_SIZE),await crypto.subtle.importKey("raw",t,{name:"AES-GCM",length:8*KEY_SIZE},!1,["encrypt"]));if(l=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv:r,additionalData:w},S,s)),s.fill(0),s=null,i.fill(0),i=null,(o=new Uint8Array(r.length+n.length+l.length)).set(r,0),o.set(n,r.length),o.set(l,r.length+n.length),o.length>BLOB_SIZE_MAX)return void setStatus("Secret is too large. Maximum size is 1 MiB.",!1);var g,b=normalizeOrigin(p)+"/blob/"+bytesToHex(a),L=await fetch(b,{method:"POST",headers:{"Content-Type":"application/octet-stream"},body:o});if(!L.ok)throw g=await safeText(L),new Error(`POST ${b} ${L.status}: `+(g||L.statusText));h.value="";setLink(p,c,base64UrlEncode(t));var m=E?" This secret requires the password you set during creation.":"";if(e&&state.link)try{if("undefined"==typeof navigator||!navigator.clipboard||"function"!=typeof navigator.clipboard.writeText)throw new Error("Clipboard API unavailable");await navigator.clipboard.writeText(state.link),setStatus("Secret stored and the share link was copied to your clipboard automatically."+m,!0)}catch(e){console.error(e),setStatus("Secret stored, but automatic link copy failed. Use the copy button above."+m,!0)}else setStatus("Secret stored. Share the generated link."+m,!0)}catch(e){console.error(e),setStatus(e.message||String(e))}finally{i&&i.fill(0),s&&s.fill(0),l&&l.fill(0),o&&o.fill(0),t&&t.fill(0),r&&r.fill(0),n&&n.fill(0),a&&a.fill(0)}lockTextarea(!1)}async function copyLink(){try{state.link?(await navigator.clipboard.writeText(state.link),setStatus("Link copied to clipboard.",!0),setTimeout(()=>{state.link&&setStatus("")},1200)):setStatus("No link available to copy.",!1)}catch(e){setStatus("Could not copy link: "+(e.message||e),!1)}}async function safeText(e){try{return await e.text()}catch{return""}}async function tryToReceiveSecret(){var i=parseLocationHash(window.location.hash||"");if(i){clearLocationHash(),clearPendingSecret(),lockTextarea(!0);let e=null,t=null,r=null,n=null,a=null;try{var s=getOrigin();if((e=base64UrlDecode(i.bK)).length!==KEY_SIZE)throw new Error("Key length mismatch");if(!(n=base64UrlDecode(i.id))||n.length!==ID_SIZE)throw new Error("ID length mismatch");setStatus("Fetching secret…");var l,o=normalizeOrigin(s)+"/blob/"+bytesToHex(n),c=await fetch(o);if(!c.ok)throw l=await safeText(c),new Error(`GET ${o} ${c.status}: `+(l||c.statusText));if((t=new Uint8Array(await c.arrayBuffer())).length<=NONCE_SIZE+SALT_SIZE+BLOB_TYPE_SIZE)throw new Error("Blob is too small");var d,u,p=t.subarray(0,NONCE_SIZE),y=t.subarray(NONCE_SIZE,NONCE_SIZE+SALT_SIZE),h=t.subarray(NONCE_SIZE+SALT_SIZE);if(!equal16B(a=await deriveIdFromKeyAndSalt(e,y),n))throw d=base64UrlEncode(a),(u=new Error(`ID mismatch: derived ID' (${d}) !== provided ID (${i.id}).`)).name="IdMismatchError",u.derivedId=d,u.providedId=i.id,u;var f=await crypto.subtle.importKey("raw",e,{name:"AES-GCM",length:8*KEY_SIZE},!1,["decrypt"]),E=encoder.encode("id="+i.id);if((r=new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM",iv:p,additionalData:E},f,h))).length<BLOB_TYPE_SIZE)throw new Error("Decrypted payload missing type tag");var w=r[0]<<8|r[1],v=w===BLOB_TYPE_PASSWORD_VALUE;if(!v&&w!==BLOB_TYPE_TEXT_VALUE)throw new Error("Unsupported blob type");var S=r.subarray(BLOB_TYPE_SIZE);if(v){var g=cloneBytes(p),b=cloneBytes(y),L=cloneBytes(S);if(!g||!b||!L)throw new Error("Failed to prepare password protected payload");state.pendingSecret={id:i.id,nonce:g,salt:b,ciphertext:L},r.fill(0),setDecryptionCardVisible(!(r=null)),setStatus("Password required to decrypt this secret.",!1);var m=$("decryptionPassword");m&&(m.value="",m.focus())}else{var _=$("text");_.value=decoder.decode(S),_.dispatchEvent(new Event("input",{bubbles:!0})),setStatus("Secret retrieved and decrypted.",!0)}}catch(e){console.error(e),setDecryptionCardVisible(!1),setStatus(e.message||String(e)),clearPendingSecret()}finally{r&&r.fill(0),e&&e.fill(0),n&&n.fill(0),a&&a.fill(0),t&&t.fill(0),lockTextarea(!1)}}}async function decryptPendingSecretWithPassword(){var r=state.pendingSecret;if(r&&r.ciphertext){var n=$("decryptionPassword"),a=n.value;if(a){let e=null,t=!1;try{setStatus("Decrypting secret with provided password…");var i=await derivePasswordKey(a,r.salt,["decrypt"]),s=encoder.encode("id="+r.id),l=(e=new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM",iv:r.nonce,additionalData:s},i,r.ciphertext)),$("text"));l.value=decoder.decode(e),l.dispatchEvent(new Event("input",{bubbles:!0})),setStatus("Secret decrypted with the provided password.",!(n.value="")),setDecryptionCardVisible(!1),t=!0}catch(e){console.error(e),setStatus("Could not decrypt with that password.",!1),n.select(),n.focus()}finally{t&&clearPendingSecret(),e&&e.fill(0)}}else setStatus("Enter the password to decrypt this secret.",!1),n.focus()}else setStatus("No secret waiting for password decryption.",!1)}let hostInput=$("host");if(hostInput)try{let e=window.location.origin;e&&"null"!==e&&(hostInput.value=e)}catch(e){}$("btnGetLink").addEventListener("click",()=>{sendSecret(!1)}),$("btnCopyLink").addEventListener("click",copyLink);let optionalPasswordField=$("optionalPassword"),textArea=$("text");if(null===state.originalPlaceholder){let e=textArea.getAttribute("placeholder");state.originalPlaceholder="string"==typeof e?e:""}textArea.addEventListener("keydown",e=>{var t=isMacLike?e.metaKey:e.ctrlKey;"Enter"===e.key&&t&&(e.repeat||sendSecret(!0),e.preventDefault())}),optionalPasswordField.addEventListener("keydown",e=>{var t=isMacLike?e.metaKey:e.ctrlKey;"Enter"===e.key&&t&&(e.repeat||sendSecret(!0),e.preventDefault())});let decryptBtn=$("decryptBtn"),passwordField=(decryptBtn.addEventListener("click",()=>{decryptPendingSecretWithPassword()}),$("decryptionPassword")),qrButton=(passwordField.addEventListener("keydown",e=>{"Enter"===e.key&&(e.preventDefault(),decryptPendingSecretWithPassword())}),$("btnGenerateQr")),closeStatusBtn=(qrButton.addEventListener("click",()=>{state.link?(state.qrVisible=!state.qrVisible,updateQr(),qrButton.textContent=state.qrVisible?"Hide QR":"Generate QR",state.qrVisible&&setStatus("QR code generated.",!0)):setStatus("Generate a link first.")}),$("closeStatus"));closeStatusBtn.addEventListener("click",()=>{setStatus("")}),$("host").addEventListener("change",()=>{if(state.id&&state.bK)try{setLink(getOrigin(),state.id,state.bK)}catch{}}),document.addEventListener("DOMContentLoaded",function(){let s=document.getElementById("text"),r=document.querySelector(".nav-toggle"),n=document.querySelector(".nav-links");if(s){let r=document.createElement("div"),n="function"==typeof TextEncoder?new TextEncoder:null,a=BLOB_SIZE_MAX-100,i=(a/1024).toFixed(2);r.classList.add("char-counter"),s.parentNode.appendChild(r);var e=()=>{var e=s.value||"",e=(n?n.encode(e):e).length,t=(e/1024).toFixed(2);r.textContent=i?`${t} of ${i} KiB`:t+" KiB",r.classList.remove("warning","danger"),a&&(.9<(t=e/a)?r.classList.add("danger"):.8<t&&r.classList.add("warning"))};s.addEventListener("input",e),e()}if(r&&n){let t=()=>{n.classList.contains("is-open")&&(n.classList.remove("is-open"),r.classList.remove("is-active"))};r.addEventListener("click",()=>{var e=n.classList.toggle("is-open");r.classList.toggle("is-active",e)}),n.addEventListener("click",e=>{e.target.classList.contains("nav-link")&&t()}),document.addEventListener("click",e=>{n.contains(e.target)||r.contains(e.target)||t()}),window.addEventListener("resize",()=>{768<window.innerWidth&&(n.classList.remove("is-open"),r.classList.remove("is-active"))})}}),tryToReceiveSecret();
+})();</script>
+    
+</body>
+</html>

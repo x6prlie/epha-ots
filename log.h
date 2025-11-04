@@ -1,3 +1,22 @@
+/*
+ * Copyright (C) 2025 epha-ots authors
+ *
+ * This file is part of epha-ots.
+ *
+ * epha-ots is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * epha-ots is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with epha-ots.  If not, see <https://www.gnu.org/licenses/>.
+ */
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 #pragma once
 
@@ -5,6 +24,7 @@
 #include <time.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #define ANSI_RESET "\x1b[0m"
 #define ANSI_RED "\x1b[31m"
@@ -13,11 +33,6 @@
 
 #if SYSLOG
 #include <syslog.h>
-#endif
-
-#if FILELOG
-static const char *log_file_path = "epha.log";
-static FILE *log_file;
 #endif
 
 static __always_inline const char *now_local_iso8601()
@@ -39,95 +54,41 @@ static inline void logd_(const char *restrict func, const char *restrict fmt,
 	va_list ap;
 	va_start(ap, fmt);
 
+#ifdef _PTHREAD_H
+	// LOCK
 	flockfile(stdout);
+#endif
 	fprintf(stdout, ANSI_CYAN);
 	fprintf(stdout, "[D][%s] %s: ", now_local_iso8601(), func);
 	vfprintf(stdout, fmt, ap);
 	va_end(ap);
 	fprintf(stdout, ANSI_RESET);
 	fflush(stdout);
+#ifdef _PTHREAD_H
+	// UNLOCK
 	funlockfile(stdout);
+#endif
 #else
 	(void)func;
 	(void)fmt;
 #endif
 }
 
-void log_init()
-{
-#if SYSLOG
-	const int options = LOG_CONS | LOG_NDELAY | LOG_PID;
-	const int facility = LOG_USER;
-	openlog(NULL, options, facility);
-#endif
-#if FILELOG
-	log_file = fopen(log_file_path, "a");
-	if (!log_file) {
-		fprintf(stderr,
-			"Cannot open file %s in order to init logger!\n",
-			log_file_path);
-		exit(EXIT_FAILURE);
-	}
-#endif
-}
-
-void log_close()
-{
-#if SYSLOG
-	closelog();
-#endif
-#if FILELOG
-	fflush(log_file);
-	fclose(log_file);
-#endif
-}
-
-static inline void log_(bool ERROR, const char *restrict func,
-			const char *restrict fmt, ...)
-{
-#if FILELOG
-	FILE *out_ = log_file;
+#if defined(__GNUC__) || defined(__clang__)
+#define LOG_PRINTF_ATTR(fmt_idx, arg_idx) \
+	__attribute__((format(printf, fmt_idx, arg_idx)))
 #else
-	FILE *out_ = ERROR ? stderr : stdout;
-#endif
-	va_list ap;
-	va_start(ap, fmt);
-#if SYSLOG
-	va_list ap_syslog;
-	va_copy(ap_syslog, ap);
+#define LOG_PRINTF_ATTR(fmt_idx, arg_idx)
 #endif
 
-	// LOCK
-	flockfile(out_);
+void log_init(void);
+void log_close(void);
+void log_(bool ERROR, const char *restrict func, const char *restrict fmt, ...)
+	LOG_PRINTF_ATTR(3, 4);
 
-#if !FILELOG
-	if (ERROR) {
-		fprintf(out_, ANSI_RED);
-	} else {
-		fprintf(out_, ANSI_GREEN);
-	}
-#endif
-
-	fprintf(out_, "[%c][%s] %s: ", ERROR ? 'E' : 'I', now_local_iso8601(),
-		func);
-	vfprintf(out_, fmt, ap);
-	va_end(ap);
-
-#if !FILELOG
-	fprintf(out_, ANSI_RESET);
-#endif
-
-	fprintf(out_, "\n");
-
-	// UNLOCK
-	funlockfile(out_);
-
-#if SYSLOG
-	vsyslog(ERROR ? LOG_ERR : LOG_INFO, fmt, ap_syslog);
-	va_end(ap_syslog);
-#endif
-}
+#undef LOG_PRINTF_ATTR
 
 #define LOG(fmt, ...) log_(false, __func__, fmt, ##__VA_ARGS__)
 #define LOGE(fmt, ...) log_(true, __func__, fmt, ##__VA_ARGS__)
+// it is really terrible to not to have a good debugger
 #define LOGD(fmt, ...) logd_(__func__, fmt, ##__VA_ARGS__)
