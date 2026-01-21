@@ -121,7 +121,7 @@ static inline blk_size_t bfootprint()
 	static_assert(sizeof(blk_t) % 16 == 0, "blk_t must be aligned 16");
 	blk_size_t footprint =
 		(sizeof(bucket_t) + sizeof(blk_t)) * BUCKETS_COUNT;
-	for (unsigned i = 0; i < BUCKETS_COUNT; ++i) {
+	for (size_t i = 0; i < BUCKETS_COUNT; ++i) {
 		const unsigned count = bbucket_capacity(i);
 		const unsigned payload_size = bbucket_item_size_max(i);
 		const unsigned block_size = sizeof(blk_t) + payload_size;
@@ -142,7 +142,7 @@ static inline balloc_t *binit(void *memory, blk_size_t memory_size)
 
 	// actual data go first
 	ptr = memory;
-	for (unsigned i = 0; i < BUCKETS_COUNT; ++i) {
+	for (size_t i = 0; i < BUCKETS_COUNT; ++i) {
 		ptr += sizeof(bucket_t);
 		buckets[i].blk = (blk_t *)(ptr);
 		ptr += sizeof(blk_t);

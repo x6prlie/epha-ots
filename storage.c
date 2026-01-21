@@ -246,7 +246,7 @@ void storage_zero()
 	uint64_t total_transfered_size = 0;
 	uint64_t total_allocs = 0;
 	uint64_t total_allocs_failed = 0;
-	for (uint i = 0; i < BUCKETS_COUNT; ++i) {
+	for (size_t i = 0; i < BUCKETS_COUNT; ++i) {
 		const uint64_t try_allocs = balloc_statistics.try_allocs[i];
 		const uint64_t allocs_failed =
 			balloc_statistics.no_space_errors_count[i];
@@ -258,7 +258,7 @@ void storage_zero()
 		const uint64_t used_size_real =
 			item_size_max * (try_allocs - allocs_failed);
 
-		LOG(" <===> bucket %u, up to %.1f KiB", i,
+		LOG(" <===> bucket %lu, up to %.1f KiB", i,
 		    (double)item_size_max / 1024.0);
 		LOG("allocations count %lu", try_allocs);
 		LOG("unsuccessful %lu (%.1f%%)", allocs_failed,
@@ -358,7 +358,7 @@ void storage_blob_free(blk_t *block)
 storage_status_t storage_status()
 {
 	storage_status_t status;
-	for (unsigned i = 0; i < BUCKETS_COUNT; ++i) {
+	for (size_t i = 0; i < BUCKETS_COUNT; ++i) {
 		status.max[i] = bbucket_capacity(i);
 		status.in_use[i] =
 			status.max[i] - bbucket_items_free(balloc_data, i);

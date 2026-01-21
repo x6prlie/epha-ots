@@ -63,7 +63,7 @@ static inline bool debouncer_allow_key(uint64_t key, uint32_t now)
 
 	uint32_t i = (uint32_t)(key ^ (key >> 32)) & deb_mask;
 
-	for (uint32_t p = 0; p <= deb_mask; ++p) {
+	for (size_t p = 0; p <= deb_mask; ++p) {
 		deb_entry_t *e = &deb_tbl[(i + p) & deb_mask];
 		if (e->key == key) {
 			if ((int32_t)(e->until_ms - now) > 0)

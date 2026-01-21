@@ -237,7 +237,7 @@ bool assets_load()
 	FILE *file_descriptors[ASSETS_COUNT] = {};
 	size_t asset_sizes[ASSETS_COUNT] = {}, assets_size_total = 0;
 	// open assets and calculate size
-	for (uint i = 0; i < ASSETS_COUNT; ++i) {
+	for (size_t i = 0; i < ASSETS_COUNT; ++i) {
 		const char *const file_path = asset_file_paths[i];
 		FILE **f = &file_descriptors[i];
 		*f = fopen(file_path, "rb");
@@ -270,7 +270,7 @@ close_assets_file_descriptors_and_exit_with_error:
 	assets_memory = (uint8_t *)malloc(assets_size_total);
 	if (!assets_memory) {
 		LOGE("Failed to allocate %lu bytes", assets_size_total);
-		for (uint i = 0; i < ASSETS_COUNT; ++i) {
+		for (size_t i = 0; i < ASSETS_COUNT; ++i) {
 			fclose(file_descriptors[i]);
 		}
 		return false;
@@ -278,7 +278,7 @@ close_assets_file_descriptors_and_exit_with_error:
 
 	// read files
 	uint8_t *current_ptr = assets_memory;
-	for (uint i = 0; i < ASSETS_COUNT; ++i) {
+	for (size_t i = 0; i < ASSETS_COUNT; ++i) {
 		asset_t *asset = &assets[i];
 		size_t asset_size = asset_sizes[i];
 		FILE *f = file_descriptors[i];
@@ -297,7 +297,7 @@ close_assets_file_descriptors_and_exit_with_error:
 		current_ptr += asset_size;
 	}
 	LOG("%u static assets loaded for paths:", ASSETS_COUNT);
-	for (uint i = 0; i < ASSETS_COUNT; ++i) {
+	for (size_t i = 0; i < ASSETS_COUNT; ++i) {
 		LOG("%s", asset_paths[i]);
 		LOGD("%s\t%.1fKiB\n", asset_file_paths[i],
 		     (float)assets[i].size / 1024.f);
@@ -308,7 +308,7 @@ close_assets_file_descriptors_and_exit_with_error:
 
 bool asset_find(const char *url, asset_t **asset)
 {
-	for (uint i = 0; i < ASSETS_COUNT; ++i) {
+	for (size_t i = 0; i < ASSETS_COUNT; ++i) {
 		if (0 ==
 		    strncmp(url, asset_paths[i], ASSET_PATH_STRING_MAX_SIZE)) {
 			*asset = &assets[i];

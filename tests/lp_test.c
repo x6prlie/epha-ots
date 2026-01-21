@@ -86,7 +86,7 @@ static __always_inline uint64_t htable_hash(htable_key_t data)
 
 static void clear_table(void)
 {
-	for (uint32_t i = 0; i < TABLE_SIZE; ++i) {
+	for (size_t i = 0; i < TABLE_SIZE; ++i) {
 		key_set_null(&g_keys[i]);
 		g_vals[i] = 0xDEADBEEF;
 	}
@@ -107,7 +107,7 @@ static uint32_t key_home_index(htable_key_t k)
 
 static htable_key_t make_key_for_home(uint32_t desired_home, uint64_t salt)
 {
-	for (uint64_t tweak = 1; tweak != 0; ++tweak) {
+	for (size_t tweak = 1; tweak != 0; ++tweak) {
 		htable_key_t candidate = make_key(salt, tweak);
 		if (key_home_index(candidate) == desired_home) {
 			return candidate;
@@ -203,15 +203,15 @@ static void test_linear_probe_cluster(void)
 	LOGD("\n===========\nstart\n");
 	clear_table();
 
-	for (int i = 0; i < 8; ++i) {
+	for (size_t i = 0; i < 8; ++i) {
 		htable_key_t k = make_key(12345ULL, (uint64_t)i);
 		insert_no_overflow(k, i * 10);
 	}
 
-	for (int i = 0; i < 8; ++i) {
+	for (size_t i = 0; i < 8; ++i) {
 		htable_key_t k = make_key(12345ULL, (uint64_t)i);
 		char msg[128];
-		snprintf(msg, sizeof(msg), "cluster lookup key #%d", i);
+		snprintf(msg, sizeof(msg), "cluster lookup key #%ld", i);
 		TASSERT(check_value(k, i * 10), msg);
 	}
 }
@@ -222,14 +222,14 @@ static void test_erase_and_cluster_compaction(void)
 	clear_table();
 
 	htable_key_t ks[6];
-	for (int i = 0; i < 6; ++i) {
+	for (size_t i = 0; i < 6; ++i) {
 		ks[i] = make_key(999ULL, (uint64_t)i);
 		insert_no_overflow(ks[i], 1000 + i);
 	}
 
-	for (int i = 0; i < 6; ++i) {
+	for (size_t i = 0; i < 6; ++i) {
 		char msg[128];
-		snprintf(msg, sizeof(msg), "pre-erase lookup k[%d]", i);
+		snprintf(msg, sizeof(msg), "pre-erase lookup k[%ld]", i);
 		TASSERT(check_value(ks[i], 1000 + i), msg);
 	}
 
@@ -239,11 +239,11 @@ static void test_erase_and_cluster_compaction(void)
 	uint32_t idx2 = lp_lookup(g_keys, ks[2], TABLE_SIZE);
 	TASSERT(idx2 == TABLE_SIZE, "ks[2] should be gone after erase");
 
-	for (int i = 0; i < 6; ++i) {
+	for (size_t i = 0; i < 6; ++i) {
 		if (i == 2)
 			continue;
 		char msg[128];
-		snprintf(msg, sizeof(msg), "post-erase lookup k[%d]", i);
+		snprintf(msg, sizeof(msg), "post-erase lookup k[%ld]", i);
 		TASSERT(check_value(ks[i], 1000 + i), msg);
 	}
 }
@@ -280,9 +280,9 @@ static void test_null_behavior(void)
 	LOGD("\n===========\nstart\n");
 	clear_table();
 
-	for (uint32_t i = 0; i < TABLE_SIZE; ++i) {
+	for (size_t i = 0; i < TABLE_SIZE; ++i) {
 		char msg[128];
-		snprintf(msg, sizeof(msg), "initial slot %u is null", i);
+		snprintf(msg, sizeof(msg), "initial slot %ld is null", i);
 		TASSERT(key_is_null(g_keys[i]), msg);
 	}
 
@@ -345,10 +345,10 @@ static void test_erase_wraparound_path(void)
 	clear_table();
 
 	const uint32_t cluster_home = 10;
-	const int cluster_len = 7;
+	const size_t cluster_len = 7;
 	htable_key_t cluster[cluster_len];
 
-	for (int i = 0; i < cluster_len; ++i) {
+	for (size_t i = 0; i < cluster_len; ++i) {
 		cluster[i] = make_key_for_home(cluster_home, 5000 + i);
 		insert_no_overflow(cluster[i], 100 + i);
 	}
@@ -363,10 +363,10 @@ static void test_erase_wraparound_path(void)
 	TASSERT(lookup_deleted == TABLE_SIZE,
 		"erased key should not be found after wraparound erase");
 
-	for (int i = 1; i < cluster_len; ++i) {
+	for (size_t i = 1; i < cluster_len; ++i) {
 		char msg[128];
 		snprintf(msg, sizeof(msg),
-			 "cluster key %d survives wraparound erase", i);
+			 "cluster key %ld survives wraparound erase", i);
 		TASSERT(check_value(cluster[i], 100 + i), msg);
 	}
 }
