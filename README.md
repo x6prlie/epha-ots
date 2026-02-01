@@ -175,6 +175,7 @@ This project is licensed under the GNU General Public License v3.0. See `LICENSE
 ## TODO
 
 - storage memory encryption, because now it can leak to swap as is IF ulimits unchanged
+- replace blk_t.data pointers deref with pointer calculation
 - service worker for TOFU?
 - additional not-so-fancy web client
 - storage duration options
