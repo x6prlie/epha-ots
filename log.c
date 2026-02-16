@@ -76,11 +76,6 @@ void log_(bool ERROR, const char *restrict func, const char *restrict fmt, ...)
 	va_copy(ap_syslog, ap);
 #endif
 
-#ifdef _PTHREAD_H
-	// LOCK
-	flockfile(out_);
-#endif
-
 #if !FILELOG
 	if (ERROR) {
 		fprintf(out_, ANSI_RED);
@@ -99,11 +94,6 @@ void log_(bool ERROR, const char *restrict func, const char *restrict fmt, ...)
 #endif
 
 	fprintf(out_, "\n");
-
-#ifdef _PTHREAD_H
-	// UNLOCK
-	funlockfile(out_);
-#endif
 
 #if SYSLOG
 	vsyslog(ERROR ? LOG_ERR : LOG_INFO, fmt, ap_syslog);

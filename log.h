@@ -54,20 +54,12 @@ static inline void logd_(const char *restrict func, const char *restrict fmt,
 	va_list ap;
 	va_start(ap, fmt);
 
-#ifdef _PTHREAD_H
-	// LOCK
-	flockfile(stdout);
-#endif
 	fprintf(stdout, ANSI_CYAN);
 	fprintf(stdout, "[D][%s] %s: ", now_local_iso8601(), func);
 	vfprintf(stdout, fmt, ap);
 	va_end(ap);
 	fprintf(stdout, ANSI_RESET);
 	fflush(stdout);
-#ifdef _PTHREAD_H
-	// UNLOCK
-	funlockfile(stdout);
-#endif
 #else
 	(void)func;
 	(void)fmt;
