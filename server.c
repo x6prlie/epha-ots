@@ -298,7 +298,7 @@ bool assets_load()
 	// allocate memory
 	assets_memory = (uint8_t *)malloc(assets_size_total);
 	if (!assets_memory) {
-		LOGE("Failed to allocate %lu bytes", assets_size_total);
+		LOGE("Failed to allocate %zu bytes", assets_size_total);
 		return false;
 	}
 
@@ -323,7 +323,7 @@ bool assets_load()
 		LOGD("%s\t%.1fKiB\n", asset_file_paths[i],
 		     (float)assets[i].size / 1024.f);
 	}
-	LOGD("total size %lu bytes\n", assets_size_total);
+	LOGD("total size %zu bytes\n", assets_size_total);
 	return true;
 }
 
@@ -549,7 +549,7 @@ static enum MHD_Result send_response(struct MHD_Connection *c, unsigned code,
 				     enum MHD_ResponseMemoryMode mode,
 				     enum HEADER_PROFILE header_profile)
 {
-	LOGD("responding %lu bytes of %s\n", len,
+	LOGD("responding %zu bytes of %s\n", len,
 	     content_type ? content_type : "~");
 	struct MHD_Response *resp =
 		MHD_create_response_from_buffer(len, (void *)data, mode);
@@ -775,8 +775,8 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 				payload, sizeof(payload),
 				"{\"uptime_hours\":%.1f,\"total_served\":%u,"
 				"\"blobs_in_use\":%zu,\"connections\":{"
-				"\"total\":%lu,\"unknown\":%lu,"
-				"\"debounced\":%lu}}",
+				"\"total\":%zu,\"unknown\":%zu,"
+				"\"debounced\":%zu}}",
 				app_uptime_hours(), statistics.total_served,
 				blobs_in_use, statistics.connections_total,
 				statistics.connections_unknown,
@@ -1234,13 +1234,13 @@ cleanup:
 		secure_zero(req_ctx_memory, req_ctx_memory_size);
 	}
 #if STATISTICS
-	LOG("req_ctx_t statistics: total created=%lu, peak alive=%lu, alive now=%lu",
+	LOG("req_ctx_t statistics: total created=%zu, peak alive=%zu, alive now=%zu",
 	    statistics.req_ctx_total_created, statistics.req_ctx_alive_max,
 	    statistics.req_ctx_alive_current);
-	LOG("connection statistics: total=%lu, unknown=%lu",
+	LOG("connection statistics: total=%zu, unknown=%zu",
 	    statistics.connections_total, statistics.connections_unknown);
 #if DEBOUNCER
-	LOG("debouncer statistics: total debounced=%lu, capacity=%u, window_ms=%u",
+	LOG("debouncer statistics: total debounced=%zu, capacity=%u, window_ms=%u",
 	    statistics.connections_debounced, DEB_CAP, DEB_WINDOW_MS);
 #endif
 #endif

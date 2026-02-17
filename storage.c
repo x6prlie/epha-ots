@@ -236,9 +236,9 @@ void storage_zero()
 	secure_zero(mallocated_data.data, mallocated_data.size);
 #if STATISTICS
 	LOG("lp statistics:\n"
-	    "inserts: %lu\n"
-	    "collisions: %lu\n"
-	    "total went due to collisions: %lu",
+	    "inserts: %zu\n"
+	    "collisions: %zu\n"
+	    "total went due to collisions: %zu",
 	    lp_statistics.insertion_count, lp_statistics.hash_collision_count,
 	    lp_statistics.total_went_due_to_collisions);
 	LOG("balloc_statistics:");
@@ -258,10 +258,10 @@ void storage_zero()
 		const uint64_t used_size_real =
 			item_size_max * (try_allocs - allocs_failed);
 
-		LOG(" <===> bucket %lu, up to %.1f KiB", i,
+		LOG(" <===> bucket %zu, up to %.1f KiB", i,
 		    (double)item_size_max / 1024.0);
-		LOG("allocations count %lu", try_allocs);
-		LOG("unsuccessful %lu (%.1f%%)", allocs_failed,
+		LOG("allocations count %zu", try_allocs);
+		LOG("unsuccessful %zu (%.1f%%)", allocs_failed,
 		    (double)allocs_failed / (double)try_allocs * 100.0);
 		LOG("max used at once: %u of %u items (%.1f%%)", used, capacity,
 		    (float)used / (float)capacity * 100.f);
@@ -277,7 +277,7 @@ void storage_zero()
 		total_transfered_size_real += used_size_real;
 		total_transfered_size += used_size;
 	}
-	LOG("total allocations count %lu (%lu + %lu, fail ratio %.f%%)",
+	LOG("total allocations count %zu (%zu + %zu, fail ratio %.f%%)",
 	    total_allocs, (total_allocs - total_allocs_failed),
 	    total_allocs_failed,
 	    (double)total_allocs_failed / total_allocs * 100.0);
@@ -287,7 +287,7 @@ void storage_zero()
 	    (double)total_transfered_size / (double)total_transfered_size_real *
 		    100.0);
 
-	LOG("total rip: %lu", storage_rip_total);
+	LOG("total rip: %zu", storage_rip_total);
 
 #endif
 	STORAGE_ZONE_END(free_zone);
