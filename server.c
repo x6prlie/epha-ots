@@ -250,9 +250,14 @@ ssize_t open_file_and_get_size(const char *file_path, int *fd_out)
 		LOGE("Failed to get the size of file %s", file_path);
 		return -1;
 	}
-	ssize_t file_size = statbuf.st_size; 
+	if (!S_ISREG(statbuf.st_mode)) {
+		LOGE("%s is not a regular file", file_path);
+		return -1;
+	}
+	ssize_t file_size = statbuf.st_size;
 	if (file_size <= 0) {
-		LOGE("Unacceptable size of file %s (%ld bytes)", file_path, file_size);
+		LOGE("Unacceptable size of file %s (%ld bytes)", file_path,
+		     file_size);
 		return -1;
 	}
 	return file_size;
