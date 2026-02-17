@@ -19,6 +19,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // epha-ots server
 
+#include <sys/types.h>
 #define _GNU_SOURCE
 #include <microhttpd.h>
 
@@ -249,7 +250,12 @@ ssize_t open_file_and_get_size(const char *file_path, int *fd_out)
 		LOGE("Failed to get the size of file %s", file_path);
 		return -1;
 	}
-	return statbuf.st_size;
+	ssize_t file_size = statbuf.st_size; 
+	if (file_size <= 0) {
+		LOGE("Unacceptable size of file %s (%ld bytes)", file_path, file_size);
+		return -1;
+	}
+	return file_size;
 }
 
 bool read_and_close_file(int fd, uint8_t *out, ssize_t size)
