@@ -56,16 +56,16 @@ static blk_size_t bfootprint();
 static balloc_t *binit(void *memory, blk_size_t memory_size);
 
 // size must never be 0 or 1
-static inline uint bindex(blk_size_t size);
+static inline uint64_t bindex(blk_size_t size);
 
 static inline blk_t *balloc(balloc_t *ba, blk_size_t size);
 static inline void bfree(balloc_t *ba, blk_t *blk);
 
 // the size of a bucket
-static inline uint32_t bbucket_capacity(uint index);
+static inline uint32_t bbucket_capacity(uint64_t index);
 // the size of an item in a bucket
-static inline blk_size_t bbucket_item_size_max(uint index);
-static inline uint32_t bbucket_items_free(balloc_t *ba, uint index);
+static inline blk_size_t bbucket_item_size_max(uint64_t index);
+static inline uint32_t bbucket_items_free(balloc_t *ba, uint64_t index);
 
 // util
 // i must never be 0
@@ -99,17 +99,17 @@ static inline int ilog2_u32(uint32_t i)
 	return 31 - __builtin_clz(i);
 }
 
-static inline blk_size_t bbucket_capacity(uint index)
+static inline blk_size_t bbucket_capacity(uint64_t index)
 {
 	return 1 << (BLOB_LOG_OF_SIZE_MAX - index);
 }
 
-static inline uint32_t bbucket_items_free(balloc_t *ba, uint index)
+static inline uint32_t bbucket_items_free(balloc_t *ba, uint64_t index)
 {
 	return ba->buckets[index].free;
 }
 
-static inline blk_size_t bbucket_item_size_max(uint index)
+static inline blk_size_t bbucket_item_size_max(uint64_t index)
 {
 	return 1 << (BLOB_ALLOC_LOG_OF_SIZE_MIN + index);
 }
@@ -172,13 +172,13 @@ static inline balloc_t *binit(void *memory, blk_size_t memory_size)
 	return ba;
 }
 
-static inline uint bindex(blk_size_t size)
+static inline uint64_t bindex(blk_size_t size)
 {
 	int index = ilog2_u32(size - 1) - BLOB_ALLOC_LOG_OF_SIZE_MIN + 1;
 	// index < 0 ⇒ 1
-	uint is_negative = (uint)index >> 31;
+	uint64_t is_negative = (uint64_t)index >> 63;
 	// is_negative ⇒ 0xFFFFFFFF
-	int mask = (int)(is_negative - 1);
+	int64_t mask = (int64_t)(is_negative - 1);
 	return index & mask;
 }
 
