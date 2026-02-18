@@ -45,6 +45,8 @@
  */
 #define BUCKETS_COUNT (BLOB_LOG_OF_SIZE_MAX - BLOB_ALLOC_LOG_OF_SIZE_MIN + 1)
 
+// bucket index type
+typedef uint64_t bindex_t;
 // buckets to store objects of same size
 typedef struct bucket_t bucket_t;
 // struct to enclose buckets
@@ -56,20 +58,16 @@ static blk_size_t bfootprint();
 static balloc_t *binit(void *memory, blk_size_t memory_size);
 
 // size must never be 0 or 1
-static inline uint64_t bindex(blk_size_t size);
+static inline bindex_t bindex(blk_size_t size);
 
 static inline blk_t *balloc(balloc_t *ba, blk_size_t size);
 static inline void bfree(balloc_t *ba, blk_t *blk);
 
 // the size of a bucket
-static inline uint32_t bbucket_capacity(uint64_t index);
+static inline size_t bbucket_capacity(bindex_t index);
 // the size of an item in a bucket
-static inline blk_size_t bbucket_item_size_max(uint64_t index);
-static inline uint32_t bbucket_items_free(balloc_t *ba, uint64_t index);
-
-// util
-// i must never be 0
-static inline int ilog2_u32(uint32_t i);
+static inline blk_size_t bbucket_item_size_max(bindex_t index);
+static inline size_t bbucket_items_free(balloc_t *ba, bindex_t index);
 
 /*
  * ====================================================================== 
@@ -94,22 +92,17 @@ typedef struct __attribute__((aligned(16))) balloc_t {
 	bucket_t *buckets;
 } balloc_t;
 
-static inline int ilog2_u32(uint32_t i)
-{
-	return 31 - __builtin_clz(i);
-}
-
-static inline blk_size_t bbucket_capacity(uint64_t index)
+static inline size_t bbucket_capacity(bindex_t index)
 {
 	return 1 << (BLOB_LOG_OF_SIZE_MAX - index);
 }
 
-static inline uint32_t bbucket_items_free(balloc_t *ba, uint64_t index)
+static inline size_t bbucket_items_free(balloc_t *ba, bindex_t index)
 {
 	return ba->buckets[index].free;
 }
 
-static inline blk_size_t bbucket_item_size_max(uint64_t index)
+static inline blk_size_t bbucket_item_size_max(bindex_t index)
 {
 	return 1 << (BLOB_ALLOC_LOG_OF_SIZE_MIN + index);
 }
@@ -172,11 +165,11 @@ static inline balloc_t *binit(void *memory, blk_size_t memory_size)
 	return ba;
 }
 
-static inline uint64_t bindex(blk_size_t size)
+static inline bindex_t bindex(blk_size_t size)
 {
-	int index = ilog2_u32(size - 1) - BLOB_ALLOC_LOG_OF_SIZE_MIN + 1;
+	bindex_t index = ilog2_u64(size - 1) - BLOB_ALLOC_LOG_OF_SIZE_MIN + 1;
 	// index < 0 ⇒ 1
-	uint64_t is_negative = (uint64_t)index >> 63;
+	bindex_t is_negative = index >> 63;
 	// is_negative ⇒ 0xFFFFFFFF
 	int64_t mask = (int64_t)(is_negative - 1);
 	return index & mask;
@@ -184,8 +177,9 @@ static inline uint64_t bindex(blk_size_t size)
 
 static inline blk_t *balloc(balloc_t *ba, blk_size_t size)
 {
-	const unsigned i = bindex(size);
-	LOGD("of size %u from bucket[%u], free %u\n", size, i,
+	const bindex_t i = bindex(size);
+	LOGD("of size %llu from bucket[%llu], free %u\n",
+	     (unsigned long long)size, (unsigned long long)i,
 	     ba->buckets[i].free);
 	if (ba->buckets[i].free) {
 		blk_t *ret = ba->buckets[i].next_free;
@@ -214,8 +208,9 @@ static inline blk_t *balloc(balloc_t *ba, blk_size_t size)
 
 static inline void bfree(balloc_t *ba, blk_t *blk)
 {
-	const unsigned i = bindex(blk->size);
-	LOGD("of size %u to bucket[%u]\n", blk->size, i);
+	const bindex_t i = bindex(blk->size);
+	LOGD("of size %llu to bucket[%llu]\n", (unsigned long long)blk->size,
+	     (unsigned long long)i);
 	// stash next pointer in data field before returning to pool
 	blk->data = (uint8_t *)(ba->buckets[i].next_free);
 	ba->buckets[i].next_free = blk;

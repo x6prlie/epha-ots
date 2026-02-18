@@ -894,9 +894,10 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 				}
 
 				size_t incoming = *upload_data_size;
-				LOGD("content lenght %u, already read %u"
+				LOGD("content lenght %llu, already read %llu"
 				     "\nincoming data: %zu(%.2fKiB)\n",
-				     ctx->expected, ctx->read, incoming,
+				     (unsigned long long)ctx->expected,
+				     (unsigned long long)ctx->read, incoming,
 				     (double)incoming / 1024.0);
 
 				if (!ctx->post_body) {
@@ -929,9 +930,9 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 					blk_size_t remaining =
 						ctx->post_body->size -
 						ctx->read;
-					LOGD("%s payload overflow: read=%u incoming=%zu size=%u\n",
-					     url, ctx->read, incoming,
-					     ctx->post_body->size);
+					LOGD("%s payload overflow: read=%llu incoming=%zu size=%llu\n",
+					     url, (unsigned long long)ctx->read, incoming,
+					     (unsigned long long)ctx->post_body->size);
 					if (remaining == 0) {
 						*upload_data_size = 0;
 						AHC_RETURN(send_text(

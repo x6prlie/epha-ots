@@ -20,8 +20,15 @@
 
 #pragma once
 
-// max 4GiB
-typedef uint32_t blk_size_t;
+#include <stdint.h>
+
+typedef uint64_t blk_size_t;
+// util
+static inline uint64_t ilog2_u64(blk_size_t i)
+{
+	return 63 - __builtin_clzll(i);
+}
+
 typedef struct blk_t {
 	void *data;
 	blk_size_t size;
@@ -37,4 +44,4 @@ typedef union __attribute__((aligned(16))) {
 	// };
 } htable_key_t;
 
-typedef uint32_t htable_index_t;
+typedef uint64_t htable_index_t;

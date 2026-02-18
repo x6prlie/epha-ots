@@ -231,7 +231,7 @@ void storage_zero()
 	STORAGE_ZONE(free_zone, "storage_zero");
 	htable_index_t htable_used = htable_size - htable_free;
 	if (htable_used > 0) {
-	    LOGE("dropping %u secrets", htable_used);
+		LOGE("dropping %lu secrets", htable_used);
 	}
 	secure_zero(mallocated_data.data, mallocated_data.size);
 #if STATISTICS
@@ -308,7 +308,7 @@ blk_t *storage_blob_create(htable_key_t id, blk_size_t size,
 	}
 	blk_t *blk = balloc(balloc_data, size);
 	if (!blk) {
-		LOGE("cannot allocate %u bytes", size);
+		LOGE("cannot allocate %lu bytes", size);
 		STORAGE_RETURN(create_zone, NULL);
 	}
 
@@ -335,7 +335,8 @@ blk_t *storage_blob_get(htable_key_t id)
 	size_t index;
 	if (htable_get_blob_index(id, &index)) {
 		blk_t *ret = blob_data[index];
-		LOGD("index %u, of %u\n", index, ret->size);
+		LOGD("index %llu, of %llu\n", (unsigned long long)index,
+		     (unsigned long long)ret->size);
 		index = htable_erase_slot(index);
 		secure_zero(blob_ids[index].bytes, 16);
 		blob_valid_until[index] = VALID_UNTIL_EMPTY;
@@ -412,7 +413,8 @@ void storage_reaper()
 	storage_rip_total += blob_ids_invalid_count;
 #endif
 	if (blob_ids_invalid_count) {
-		LOGD("to rip %u\n", blob_ids_invalid_count);
+		LOGD("to rip %llu\n",
+		     (unsigned long long)blob_ids_invalid_count);
 	}
 
 	STORAGE_ZONE(reaper_rip_zone, "storage_rip");
