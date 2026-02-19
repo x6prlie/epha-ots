@@ -991,13 +991,20 @@ static void req_done(void *cls, struct MHD_Connection *c, void **con_cls,
 #endif
 	(void)cls;
 	(void)c;
-	(void)toe;
 	if (*con_cls) {
 		struct req_ctx_t *ctx = (struct req_ctx_t *)(*con_cls);
-		ctx->post_body = (blk_t){ 0 };
+		// if POST method was aborted, we need to free allocated block
+		if (toe != MHD_REQUEST_TERMINATED_COMPLETED_OK) {
+			if (ctx->post_body.size) {
+				blk_t bad_blob = storage_blob_get(
+					ctx->id); // prune out of hash table
+				if (bad_blob.size) {
+					storage_blob_free(bad_blob);
+				}
+			}
+		}
 		if (ctx->blob_send.size) {
 			storage_blob_free(ctx->blob_send);
-			ctx->blob_send = (blk_t){ 0 };
 		}
 		secure_zero(ctx->id.bytes, sizeof(ctx->id.bytes));
 #if STATISTICS
