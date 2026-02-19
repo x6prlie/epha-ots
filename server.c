@@ -912,11 +912,8 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 							MHD_HTTP_BAD_REQUEST,
 							"Duplicate!"));
 					}
-					monotonic_time_t valid_until =
-						monotonic_now_s() + BLOB_TTL_S;
 					ctx->post_body = storage_blob_create(
-						ctx->id, ctx->expected,
-						valid_until);
+						ctx->id, ctx->expected);
 					if (!ctx->post_body.size) {
 						LOGD("%s cannot get the chunk for the blob!\n",
 						     url);
@@ -970,6 +967,13 @@ static enum MHD_Result ahc(void *cls, struct MHD_Connection *conn,
 						conn, MHD_HTTP_BAD_REQUEST,
 						"Bad blob"));
 				}
+				monotonic_time_t valid_until =
+					monotonic_now_s() + BLOB_TTL_S;
+				if (!storage_blob_publish(ctx->id, valid_until)) {
+					AHC_RETURN(send_text(
+						conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+						"Internal error, cannot publish the blob"));
+				}
 				statistics.total_served += 1;
 				AHC_RETURN(send_response(
 					conn, MHD_HTTP_OK, NULL, 0, NULL,
@@ -996,11 +1000,7 @@ static void req_done(void *cls, struct MHD_Connection *c, void **con_cls,
 		// if POST method was aborted, we need to free allocated block
 		if (toe != MHD_REQUEST_TERMINATED_COMPLETED_OK) {
 			if (ctx->post_body.size) {
-				blk_t bad_blob = storage_blob_get(
-					ctx->id); // prune out of hash table
-				if (bad_blob.size) {
-					storage_blob_free(bad_blob);
-				}
+				storage_blob_abort(ctx->id);
 			}
 		}
 		if (ctx->blob_send.size) {

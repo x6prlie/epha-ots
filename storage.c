@@ -31,6 +31,7 @@
  */
 
 #define VALID_UNTIL_EMPTY UINT32_MAX
+#define VALID_UNTIL_NOT_PUBLISHED (VALID_UNTIL_EMPTY - 1)
 
 static void htable_swap(htable_index_t a, htable_index_t b);
 static uint64_t htable_hash(htable_key_t data);
@@ -295,8 +296,7 @@ void storage_zero()
 	STORAGE_ZONE_END(free_zone);
 }
 
-blk_t storage_blob_create(htable_key_t id, blk_size_t size,
-			  monotonic_time_t valid_until)
+blk_t storage_blob_create(htable_key_t id, blk_size_t size)
 {
 	STORAGE_ZONE(create_zone, "storage_blob_create");
 	if (key_is_null(id)) {
@@ -316,11 +316,37 @@ blk_t storage_blob_create(htable_key_t id, blk_size_t size,
 
 	blob_ids[index] = id;
 	blob_data[index] = blk;
-	blob_valid_until[index] = valid_until;
+	blob_valid_until[index] = VALID_UNTIL_NOT_PUBLISHED;
 
 	htable_free -= 1;
 	LOGD("finished successfully\n");
 	STORAGE_RETURN(create_zone, blk);
+}
+
+bool storage_blob_publish(htable_key_t id, monotonic_time_t valid_until)
+{
+	STORAGE_ZONE(publish_zone, "storage_blob_publish");
+	htable_index_t index = 0;
+	if (htable_get_blob_index(id, &index)) {
+		blob_valid_until[index] = valid_until;
+		STORAGE_RETURN(publish_zone, true);
+	} else {
+		STORAGE_RETURN(publish_zone, false);
+	}
+}
+
+void storage_blob_abort(htable_key_t id)
+{
+	STORAGE_ZONE(abort_zone, "storage_blob_abort");
+	htable_index_t index = 0;
+	if (htable_get_blob_index(id, &index)) {
+		index = htable_erase_slot(index);
+		secure_zero(blob_ids[index].bytes, 16);
+		storage_blob_free(blob_data[index]);
+		blob_valid_until[index] = VALID_UNTIL_EMPTY;
+		htable_free += 1;
+	}
+	STORAGE_ZONE_END(abort_zone);
 }
 
 bool storage_blob_is_already_taken(htable_key_t id)
@@ -334,18 +360,19 @@ bool storage_blob_is_already_taken(htable_key_t id)
 blk_t storage_blob_get(htable_key_t id)
 {
 	STORAGE_ZONE(get_zone, "storage_blob_get");
-	size_t index;
+	htable_index_t index = 0;
 	if (htable_get_blob_index(id, &index)) {
-		blk_t ret = blob_data[index];
-		LOGD("index %lu, of %lu\n", index, ret.size);
-		index = htable_erase_slot(index);
-		secure_zero(blob_ids[index].bytes, 16);
-		blob_valid_until[index] = VALID_UNTIL_EMPTY;
-		htable_free += 1;
-		STORAGE_RETURN(get_zone, ret);
-	} else {
-		STORAGE_RETURN(get_zone, (blk_t){ 0 });
+		if (VALID_UNTIL_NOT_PUBLISHED != blob_valid_until[index]) {
+			blk_t ret = blob_data[index];
+			LOGD("index %lu, of %lu\n", index, ret.size);
+			index = htable_erase_slot(index);
+			secure_zero(blob_ids[index].bytes, 16);
+			blob_valid_until[index] = VALID_UNTIL_EMPTY;
+			htable_free += 1;
+			STORAGE_RETURN(get_zone, ret);
+		}
 	}
+	STORAGE_RETURN(get_zone, (blk_t){ 0 });
 }
 
 void storage_blob_free(blk_t block)
